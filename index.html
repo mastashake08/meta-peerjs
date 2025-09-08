@@ -102,6 +102,15 @@
                      <div class="absolute top-8 right-8 bg-black/60 p-4 rounded-lg text-white font-mono shadow-xl text-center">
                         <h3 class="text-lg font-bold text-yellow-400">TARGET DISTANCE</h3>
                         <p class="text-3xl">{{ distanceToTarget.toFixed(0) }} m</p>
+                        <!-- RECORD BUTTON ADDED HERE -->
+                        <div class="mt-4">
+                            <button @click="toggleRecording" class="w-full px-4 py-2 rounded-md font-semibold text-white transition-colors" :class="isRecording ? 'bg-red-600 hover:bg-red-700' : 'bg-blue-600 hover:bg-blue-700'">
+                                {{ isRecording ? 'Stop Recording' : 'Record' }}
+                            </button>
+                             <a v-if="downloadUrl" :href="downloadUrl" :download="`recording-${new Date().toISOString()}.webm`" class="block mt-2 text-sm text-cyan-300 hover:text-cyan-200">
+                                Download Last Recording
+                            </a>
+                        </div>
                     </div>
                     <div class="absolute top-8 left-8 bg-black/60 p-4 rounded-lg text-white font-mono shadow-xl text-center">
                         <h3 class="text-lg font-bold text-red-400">CUBES REMAINING</h3>
@@ -184,16 +193,20 @@
                 const userData = ref({ isPro: false, skins: [], uid: null });
                 let stripe, db, auth;
 
+                // --- RECORDING STATE ---
+                const isRecording = ref(false);
+                const mediaRecorder = ref(null);
+                const recordedChunks = ref([]);
+                const downloadUrl = ref(null);
+
                 // --- Firebase and Stripe Initialization ---
                 async function initFirebaseAndStripe() {
-                    // IMPORTANT: Replace with your actual Firebase config
-                    const firebaseConfig = { apiKey: "...", authDomain: "...", projectId: "...", storageBucket: "...", messagingSenderId: "...", appId: "..." };
+                    const firebaseConfig = JSON.parse('__FIREBASE_CONFIG__');
+                    const stripeKey = '__STRIPE_PUBLISHABLE_KEY__';
                     const app = window.firebase.initializeApp(firebaseConfig);
                     auth = window.firebase.getAuth(app);
                     db = window.firebase.getFirestore(app);
-
-                    // IMPORTANT: Replace with your actual Stripe publishable key
-                    // stripe = Stripe('pk_test_...'); 
+                    stripe = Stripe(stripeKey); 
 
                     window.firebase.onAuthStateChanged(auth, async user => {
                         if (user) {
@@ -212,25 +225,29 @@
 
                 // --- Purchase Logic ---
                 async function purchase(itemId) {
-                    // This is a placeholder for a server-side checkout session creation
-                    // In a real app, you would make a call to your backend here
-                    console.log(`Initiating purchase for ${itemId}`);
-                    const priceMap = { pro: 'price_123abc', skin_fire: 'price_456def' }; // Replace with Stripe Price IDs
-                    
-                    // Simulate updating the user's data after a successful purchase
-                    if (itemId === 'pro') {
-                        userData.value.isPro = true;
-                    } else if (itemId.startsWith('skin_')) {
-                        if (!userData.value.skins.includes(itemId)) {
-                            userData.value.skins.push(itemId);
-                        }
+                    if (!userData.value.uid) {
+                        alert("User not signed in. Please wait a moment and try again.");
+                        return;
                     }
-                    await window.firebase.setDoc(window.firebase.doc(db, "users", userData.value.uid), {
-                        isPro: userData.value.isPro,
-                        skins: userData.value.skins
-                    }, { merge: true });
-
-                    alert('Purchase successful (simulation)!');
+                    statusMessage.value = 'Creating secure checkout session...';
+                    try {
+                        const response = await fetch('/create-checkout-session', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ itemId: itemId, userId: userData.value.uid })
+                        });
+                        const session = await response.json();
+                        if (session.id) {
+                            const result = await stripe.redirectToCheckout({ sessionId: session.id });
+                            if (result.error) alert(result.error.message);
+                        } else {
+                            throw new Error("Failed to create checkout session.");
+                        }
+                    } catch (error) {
+                        console.error("Purchase Error:", error);
+                        statusMessage.value = "Could not initiate purchase. Please try again.";
+                        errorMessage.value = true;
+                    }
                 }
 
                 const distanceToTarget = computed(() => {
@@ -367,6 +384,38 @@
                     sendData({ type: 'gameState', payload: gameState.value });
                     if (arReady.value) spawnCubesAR();
                     if (appMode.value === 'caller') updateCallerARScene();
+                };
+
+                // --- RECORDING LOGIC ---
+                const toggleRecording = () => {
+                    if (isRecording.value) stopRecording();
+                    else startRecording();
+                };
+
+                const startRecording = () => {
+                    if (!remoteStream.value) { alert("Stream not available to record."); return; }
+                    recordedChunks.value = [];
+                    downloadUrl.value = null;
+                    const options = { mimeType: 'video/webm; codecs=vp9' };
+                    if (!MediaRecorder.isTypeSupported(options.mimeType)) options.mimeType = 'video/webm';
+                    
+                    try {
+                        mediaRecorder.value = new MediaRecorder(remoteStream.value, options);
+                        mediaRecorder.value.ondataavailable = e => { if (e.data.size > 0) recordedChunks.value.push(e.data); };
+                        mediaRecorder.value.onstop = () => {
+                            const blob = new Blob(recordedChunks.value, { type: 'video/webm' });
+                            downloadUrl.value = URL.createObjectURL(blob);
+                        };
+                        mediaRecorder.value.start();
+                        isRecording.value = true;
+                    } catch (e) { console.error("MediaRecorder error:", e); }
+                };
+                
+                const stopRecording = () => {
+                    if (mediaRecorder.value) {
+                        mediaRecorder.value.stop();
+                        isRecording.value = false;
+                    }
                 };
 
                 // --- Receiver (Quest) AR ---
@@ -528,9 +577,17 @@
                         }
                         const mesh = callerCubeMeshes.find(m => m.userData.id === cubeData.id);
                         if(mesh) {
-                            const bearing = calculateBearing(gpsData.value.lat, gpsData.value.lon, cubeData.lat, cubeData.lon);
-                            const angleRad = (bearing * Math.PI / 180);
-                            mesh.position.set(cubeData.distance * Math.sin(angleRad), (Math.random() - 0.5) * 5, -cubeData.distance * Math.cos(angleRad));
+                             const bearing = calculateBearing(gpsData.value.lat, gpsData.value.lon, cubeData.lat, cubeData.lon);
+                            const fovAdjustedDistance = cubeData.distance / Math.tan(THREE.MathUtils.degToRad(callerCamera.fov / 2));
+                            const visibleAngleRange = 120; // degrees
+                            const angleDifference = (bearing - (window.orientation || 0) + 360) % 360;
+                            const normalizedAngle = (angleDifference > 180) ? angleDifference - 360 : angleDifference;
+
+                            if (Math.abs(normalizedAngle) < visibleAngleRange / 2) {
+                                mesh.position.set( fovAdjustedDistance * Math.sin(THREE.MathUtils.degToRad(normalizedAngle)), (Math.random() - 0.5) * 5, -cubeData.distance);
+                            } else {
+                                mesh.position.set(9999, 9999, 9999); // Hide if not in view
+                            }
                         }
                     });
                 }
@@ -541,7 +598,8 @@
                     const projectileMat = new THREE.MeshBasicMaterial({ color: 0x00ffff });
                     const projectile = new THREE.Mesh(projectileGeo, projectileMat);
                     
-                    projectile.position.set(0, 0, 0);
+                    // Spawn from center of screen and move away
+                    projectile.position.set(0, 0, 0); 
                     const velocity = new THREE.Vector3(0, 0, -1);
 
                     projectile.userData.velocity = velocity;
@@ -611,6 +669,7 @@
                     gpsData, gameState, distanceToTarget,
                     remoteVideo, localVideo,
                     showStore, userData, purchase,
+                    isRecording, downloadUrl, toggleRecording,
                 };
             }
         }).mount('#app');
