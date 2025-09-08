@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Quest/Mobile PeerJS Link</title>
+    <!-- Tailwind CSS for styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Vue 3 -->
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <!-- PeerJS -->
+    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+    
+    <style>
+        /* Simple dark theme for the body */
+        body {
+            background-color: #1a1a1a;
+            color: #f0f0f0;
+            font-family: 'Inter', sans-serif;
+        }
+        /* Custom styles for video elements to ensure they are handled correctly */
+        video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transform: scaleX(-1); /* Mirror the local video for a more natural feel */
+        }
+        /* Ensure remote video is not mirrored */
+        #remote-video {
+            transform: scaleX(1);
+        }
+        /* Force uppercase on input for consistency */
+        .uppercase-input::placeholder {
+            text-transform: none;
+        }
+    </style>
+</head>
+<body class="antialiased">
+
+    <div id="app" class="min-h-screen flex flex-col items-center justify-center p-4">
+        
+        <!-- App Loading State -->
+        <div v-if="loading" class="text-center">
+            <h1 class="text-3xl font-bold text-cyan-400">Loading...</h1>
+        </div>
+
+        <!-- Role Selection Screen -->
+        <div v-if="appMode === 'selection'" class="text-center space-y-8">
+            <h1 class="text-4xl font-bold tracking-tight">Quest/Mobile Link</h1>
+            <p class="text-lg text-gray-400">Select the role for this device.</p>
+            <div class="flex flex-col md:flex-row gap-4 justify-center">
+                <button @click="startAsCaller" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-lg shadow-lg transition-transform transform hover:scale-105">
+                    I am the Mobile Device (Caller)
+                </button>
+                <button @click="startAsReceiver" class="bg-purple-600 hover:bg-purple-700 text-white font-bold py-3 px-6 rounded-lg shadow-lg transition-transform transform hover:scale-105">
+                    I am the Meta Quest (Receiver)
+                </button>
+            </div>
+             <p class="text-sm text-gray-500 pt-8 max-w-md mx-auto">
+                <strong>Instructions:</strong> Open this page on both devices. Select "Mobile" on your phone and "Meta Quest" on your headset. Then, on the mobile device, enter the Quest's 6-character ID and press "Call".
+            </p>
+        </div>
+
+        <!-- Caller (Mobile) View -->
+        <div v-if="appMode === 'caller'" class="w-full max-w-lg text-center">
+            <h2 class="text-2xl font-bold text-blue-400 mb-2">Mobile Device (Caller)</h2>
+            <div class="bg-gray-800 p-4 rounded-lg mb-4">
+                <p class="text-sm text-gray-400">Your Peer ID:</p>
+                <p class="text-lg font-mono bg-gray-900 px-2 py-1 rounded uppercase">{{ peerId || 'Initializing...' }}</p>
+            </div>
+            
+            <div v-if="!isConnected" class="space-y-4">
+                <input v-model="remotePeerId" @input="remotePeerId = remotePeerId.toUpperCase()" maxlength="6" type="text" placeholder="Enter 6-Character Quest ID" class="w-full p-3 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 uppercase-input uppercase text-center tracking-widest font-mono text-lg">
+                <button @click="makeCall" :disabled="!remotePeerId || !peerId || remotePeerId.length !== 6" class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg shadow-lg transition-all disabled:bg-gray-600 disabled:cursor-not-allowed">
+                    Call Meta Quest
+                </button>
+            </div>
+
+            <div v-if="statusMessage" class="mt-4 p-3 rounded-lg" :class="errorMessage ? 'bg-red-900/50 text-red-300' : 'bg-gray-700/50 text-gray-300'">
+                {{ statusMessage }}
+            </div>
+
+            <div v-if="isConnected" class="mt-4 text-left bg-gray-800 p-4 rounded-lg">
+                <h3 class="text-lg font-semibold text-green-400 border-b border-gray-600 pb-2 mb-2">Connected - Streaming GPS</h3>
+                <div class="grid grid-cols-2 gap-2 text-sm">
+                    <p><strong>Lat:</strong> {{ gpsData.lat?.toFixed(5) || 'N/A' }}</p>
+                    <p><strong>Lon:</strong> {{ gpsData.lon?.toFixed(5) || 'N/A' }}</p>
+                    <p><strong>Altitude:</strong> {{ gpsData.alt ? gpsData.alt.toFixed(2) + ' m' : 'N/A' }}</p>
+                    <p><strong>Speed:</strong> {{ gpsData.speed ? (gpsData.speed * 2.237).toFixed(2) + ' mph' : 'N/A' }}</p>
+                    <p><strong>Bearing:</strong> {{ gpsData.bearing ? gpsData.bearing.toFixed(1) + '°' : 'N/A' }}</p>
+                </div>
+            </div>
+
+            <div class="mt-4 rounded-lg overflow-hidden shadow-2xl relative w-full aspect-video" v-show="localStream">
+                 <video ref="localVideo" autoplay playsinline muted class="bg-gray-900"></video>
+                 <p class="absolute bottom-2 left-2 bg-black/50 px-2 py-1 rounded text-xs">Your Camera</p>
+            </div>
+            <video ref="remoteVideo" autoplay playsinline class="hidden"></video>
+        </div>
+
+        <!-- Receiver (Meta Quest) View -->
+        <div v-if="appMode === 'receiver'" class="w-full h-screen flex flex-col items-center justify-center p-0 md:p-4">
+             <div v-if="!isConnected" class="text-center">
+                <h2 class="text-3xl font-bold text-purple-400 mb-4">Meta Quest (Receiver)</h2>
+                <p class="text-lg text-gray-300 mb-2">Your 6-Character Peer ID is:</p>
+                <div class="bg-gray-800 p-4 rounded-lg inline-block shadow-lg">
+                    <p class="text-2xl md:text-4xl font-mono tracking-widest uppercase">{{ peerId || '...' }}</p>
+                </div>
+                <p class="mt-4 text-gray-400">{{ statusMessage }}</p>
+             </div>
+             
+             <div v-if="isConnected" class="w-full h-full relative bg-black shadow-2xl rounded-lg overflow-hidden">
+                <video ref="remoteVideo" id="remote-video" autoplay playsinline class="w-full h-full object-cover"></video>
+                
+                <div class="absolute bottom-4 left-4 md:bottom-8 md:left-8 bg-black/60 backdrop-blur-sm p-4 rounded-lg text-white font-mono shadow-xl border border-white/20">
+                    <h3 class="text-lg font-bold text-cyan-300 mb-2 border-b border-cyan-300/30 pb-1">GPS Data</h3>
+                    <div class="grid grid-cols-2 gap-x-6 gap-y-1 text-base">
+                        <span>Lat:</span>      <span>{{ gpsData.lat?.toFixed(6) || '...' }}</span>
+                        <span>Lon:</span>      <span>{{ gpsData.lon?.toFixed(6) || '...' }}</span>
+                        <span>Altitude:</span> <span>{{ gpsData.alt ? gpsData.alt.toFixed(1) + ' m' : '...' }}</span>
+                        <span>Speed:</span>    <span>{{ gpsData.speed ? (gpsData.speed * 2.237).toFixed(1) + ' mph' : '...' }}</span>
+                        <span>Bearing:</span>  <span>{{ gpsData.bearing ? gpsData.bearing.toFixed(0) + '°' : '...' }}</span>
+                    </div>
+                </div>
+
+                <div class="absolute top-4 right-4 flex flex-col items-end gap-3">
+                    <div class="flex items-center gap-2 bg-black/50 px-3 py-1.5 rounded-full">
+                        <div class="w-3 h-3 bg-green-500 rounded-full animate-pulse"></div>
+                        <span class="text-sm">Connected</span>
+                    </div>
+
+                    <!-- Recording Controls -->
+                    <div class="bg-black/50 p-2 rounded-lg flex flex-col items-end gap-2">
+                        <button @click="toggleRecording" class="px-4 py-2 rounded-md font-semibold text-white transition-colors" :class="isRecording ? 'bg-red-600 hover:bg-red-700' : 'bg-blue-600 hover:bg-blue-700'">
+                            <span v-if="isRecording" class="flex items-center gap-2">
+                                <span class="w-3 h-3 bg-white rounded-full animate-pulse"></span> Stop Recording
+                            </span>
+                            <span v-else>Record</span>
+                        </button>
+                        <a v-if="downloadUrl" :href="downloadUrl" :download="`recording-${new Date().toISOString()}.webm`" class="text-sm text-cyan-300 hover:text-cyan-200 bg-gray-800/80 px-3 py-1 rounded-md">
+                            Download Last Recording
+                        </a>
+                    </div>
+                </div>
+             </div>
+             <video ref="localVideo" autoplay playsinline muted class="hidden"></video>
+        </div>
+    </div>
+
+    <script type="module">
+        const { createApp, ref, onMounted, watch } = Vue;
+
+        createApp({
+            setup() {
+                // App State
+                const loading = ref(true);
+                const appMode = ref('selection');
+                const statusMessage = ref('Initializing...');
+                const errorMessage = ref('');
+                
+                // PeerJS State
+                const peer = ref(null);
+                const peerId = ref('');
+                const remotePeerId = ref('');
+                const conn = ref(null);
+                const currentCall = ref(null);
+                const isConnected = ref(false);
+                
+                // Media Streams
+                const localStream = ref(null);
+                const remoteStream = ref(null);
+                
+                // GPS Data
+                const gpsData = ref({});
+                let gpsWatchId = null;
+
+                // Recording State
+                const isRecording = ref(false);
+                const mediaRecorder = ref(null);
+                const recordedChunks = ref([]);
+                const downloadUrl = ref(null);
+
+                // Template refs
+                const localVideo = ref(null);
+                const remoteVideo = ref(null);
+
+                watch(localStream, (stream) => { if (localVideo.value && stream) localVideo.value.srcObject = stream; });
+                watch(remoteStream, (stream) => { if (remoteVideo.value && stream) remoteVideo.value.srcObject = stream; });
+
+                const generateShortId = (length = 6) => {
+                    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+                    let result = '';
+                    for (let i = 0; i < length; i++) result += chars.charAt(Math.floor(Math.random() * chars.length));
+                    return result;
+                };
+
+                const initializePeer = () => {
+                    const generatedId = generateShortId(6);
+                    peer.value = new Peer(generatedId);
+
+                    peer.value.on('open', (id) => {
+                        console.log('My peer ID is: ' + id);
+                        peerId.value = id;
+                        statusMessage.value = appMode.value === 'receiver' ? "Ready. Share ID with mobile device." : "Ready to call.";
+                    });
+
+                    peer.value.on('error', (err) => {
+                        console.error('PeerJS error:', err);
+                        let msg = `Error: ${err.message}. Try refreshing.`;
+                        if (err.type === 'unavailable-id') msg = `ID "${generatedId}" is taken. Refresh for a new one.`;
+                        errorMessage.value = msg;
+                        statusMessage.value = errorMessage.value;
+                        peerId.value = 'ERROR';
+                    });
+
+                    if (appMode.value === 'receiver') setupReceiverListeners();
+                };
+                
+                const setupReceiverListeners = () => {
+                    statusMessage.value = 'Waiting for connection...';
+                    
+                    peer.value.on('connection', (dataConnection) => {
+                        conn.value = dataConnection;
+                        conn.value.on('open', () => {
+                            isConnected.value = true;
+                            statusMessage.value = "Connected!";
+                        });
+                        conn.value.on('data', (data) => gpsData.value = data);
+                        conn.value.on('close', handleDisconnect);
+                    });
+
+                    peer.value.on('call', async (call) => {
+                        try {
+                            const questMicStream = await navigator.mediaDevices.getUserMedia({ video: false, audio: true });
+                            localStream.value = questMicStream;
+                            call.answer(questMicStream);
+                            currentCall.value = call;
+                            call.on('stream', (stream) => remoteStream.value = stream);
+                            call.on('close', handleDisconnect);
+                        } catch(err) {
+                            console.error("Failed to get local stream", err);
+                            statusMessage.value = "Error: Could not access microphone.";
+                        }
+                    });
+                };
+
+                const startAsCaller = () => { appMode.value = 'caller'; initializePeer(); };
+                const startAsReceiver = () => { appMode.value = 'receiver'; initializePeer(); };
+                
+                const makeCall = async () => {
+                    statusMessage.value = `Connecting to ${remotePeerId.value}...`;
+                    try {
+                        const mobileStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+                        localStream.value = mobileStream;
+                        
+                        const dataConnection = peer.value.connect(remotePeerId.value);
+                        conn.value = dataConnection;
+                        dataConnection.on('open', () => {
+                            isConnected.value = true;
+                            statusMessage.value = "Connected! Starting GPS...";
+                            startGpsUpdates();
+                        });
+                        dataConnection.on('error', (err) => console.error('Data connection error:', err));
+                        dataConnection.on('close', handleDisconnect);
+
+                        const call = peer.value.call(remotePeerId.value, mobileStream);
+                        currentCall.value = call;
+                        call.on('stream', (stream) => remoteStream.value = stream);
+                        call.on('close', handleDisconnect);
+                    } catch (err) {
+                        console.error("Failed to get media or connect", err);
+                        statusMessage.value = "Error starting call. Check permissions & ID.";
+                    }
+                };
+
+                const startGpsUpdates = () => {
+                    if (!('geolocation' in navigator)) { statusMessage.value = "GPS not available."; return; }
+                    gpsWatchId = navigator.geolocation.watchPosition(
+                        (pos) => {
+                            const { latitude, longitude, altitude, speed, heading } = pos.coords;
+                            const data = { lat: latitude, lon: longitude, alt: altitude, speed: speed, bearing: heading };
+                            gpsData.value = data;
+                            if (conn.value && conn.value.open) conn.value.send(data);
+                        },
+                        (err) => statusMessage.value = `GPS Error: ${err.message}`,
+                        { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+                    );
+                };
+
+                // --- Recording Logic ---
+                const toggleRecording = () => {
+                    if (isRecording.value) {
+                        stopRecording();
+                    } else {
+                        startRecording();
+                    }
+                };
+
+                const startRecording = () => {
+                    if (!remoteStream.value) {
+                        alert("Cannot start recording, no remote stream available.");
+                        return;
+                    }
+                    recordedChunks.value = [];
+                    downloadUrl.value = null; // Clear previous download link
+                    
+                    // Check for supported mime types
+                    const options = { mimeType: 'video/webm; codecs=vp9' };
+                    if (!MediaRecorder.isTypeSupported(options.mimeType)) {
+                        console.log(`${options.mimeType} is not Supported, trying vp8`);
+                        options.mimeType = 'video/webm; codecs=vp8';
+                         if (!MediaRecorder.isTypeSupported(options.mimeType)) {
+                            console.log(`${options.mimeType} is not Supported, trying default`);
+                            options.mimeType = 'video/webm';
+                         }
+                    }
+
+                    try {
+                        mediaRecorder.value = new MediaRecorder(remoteStream.value, options);
+                    } catch (e) {
+                        console.error("Exception while creating MediaRecorder:", e);
+                        alert(`Error creating MediaRecorder: ${e.toString()}`);
+                        return;
+                    }
+                    
+                    mediaRecorder.value.ondataavailable = (event) => {
+                        if (event.data.size > 0) {
+                            recordedChunks.value.push(event.data);
+                        }
+                    };
+
+                    mediaRecorder.value.onstop = () => {
+                        const blob = new Blob(recordedChunks.value, { type: 'video/webm' });
+                        downloadUrl.value = URL.createObjectURL(blob);
+                    };
+
+                    mediaRecorder.value.start();
+                    isRecording.value = true;
+                    console.log("Recording started.");
+                };
+                
+                const stopRecording = () => {
+                    if (mediaRecorder.value) {
+                        mediaRecorder.value.stop();
+                        isRecording.value = false;
+                        console.log("Recording stopped.");
+                    }
+                };
+
+                const handleDisconnect = () => {
+                    console.log("A connection was closed.");
+                    isConnected.value = false;
+                    statusMessage.value = "Disconnected. Refresh to start over.";
+                    stopRecording(); // Stop recording on disconnect
+                    if (gpsWatchId) navigator.geolocation.clearWatch(gpsWatchId);
+                    if (localStream.value) localStream.value.getTracks().forEach(t => t.stop());
+                    if (remoteStream.value) remoteStream.value.getTracks().forEach(t => t.stop());
+                    localStream.value = remoteStream.value = conn.value = currentCall.value = null;
+                };
+
+                onMounted(() => {
+                    if (window.location.protocol !== 'https:') {
+                       statusMessage.value = "Error: This app must be served over HTTPS.";
+                       alert(statusMessage.value);
+                       return;
+                    }
+                    loading.value = false;
+                });
+
+                return {
+                    loading, appMode, peerId, remotePeerId, isConnected, statusMessage, errorMessage,
+                    gpsData, localStream, remoteStream, localVideo, remoteVideo,
+                    startAsCaller, startAsReceiver, makeCall,
+                    isRecording, downloadUrl, toggleRecording,
+                };
+            }
+        }).mount('#app');
+    </script>
+</body>
+</html>
+
+
