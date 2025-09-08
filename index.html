@@ -47,7 +47,7 @@
 
         <div v-if="appMode === 'selection'" class="text-center space-y-8 p-4">
             <h1 class="text-4xl font-bold tracking-tight">Quest/Mobile AR Game</h1>
-            <div class="flex flex-col md-flex-row gap-4 justify-center">
+            <div class="flex flex-col md:flex-row gap-4 justify-center">
                 <button @click="startAsCaller" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-lg shadow-lg">Mobile Device (Player)</button>
                 <button @click="startAsReceiver" class="bg-purple-600 hover:bg-purple-700 text-white font-bold py-3 px-6 rounded-lg shadow-lg">Meta Quest (Shooter)</button>
             </div>
@@ -96,8 +96,11 @@
                 <p class="mt-4 text-gray-400">{{ statusMessage }}</p>
             </div>
              
-            <div v-if="isConnected && !arReady" class="w-full h-full flex items-center justify-center">
-                <button @click="startARSession" class="bg-green-600 hover:bg-green-700 text-white font-bold py-4 px-8 rounded-lg text-2xl shadow-lg">Start AR</button>
+            <div v-if="isConnected && !arReady" class="w-full h-full flex items-center justify-center text-center">
+                <div>
+                    <button @click="startARSession" :disabled="!videoReady" class="bg-green-600 hover:bg-green-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-bold py-4 px-8 rounded-lg text-2xl shadow-lg">Start AR</button>
+                    <p v-if="!videoReady" class="text-gray-400 mt-4">Waiting for video stream from mobile device...</p>
+                </div>
             </div>
 
             <div v-if="isConnected && arReady" class="w-full h-full relative">
@@ -141,6 +144,7 @@
                 const conn = ref(null);
                 const isConnected = ref(false);
                 const arReady = ref(false);
+                const videoReady = ref(false);
                 
                 const localStream = ref(null);
                 const remoteStream = ref(null);
@@ -156,7 +160,7 @@
                     score: 0,
                 });
                 
-                let scene, camera, renderer, videoTexture, cubeMeshes = [], projectiles = [];
+                let scene, camera, renderer, videoTexture, cubeMeshes = [], projectiles = [], controller, clock;
 
                 const distanceToTarget = computed(() => {
                     if (gameState.value.targetGps && gpsData.value.lat) {
@@ -306,12 +310,18 @@
                     
                     const light = new THREE.HemisphereLight(0xffffff, 0xbbbbff, 1);
                     scene.add(light);
+
+                    clock = new THREE.Clock();
+
+                    controller = renderer.xr.getController(0);
+                    controller.addEventListener('select', shoot);
+                    scene.add(controller);
                     
                     try {
                         const session = await navigator.xr.requestSession('immersive-vr', { optionalFeatures: ['local-floor', 'bounded-floor'] });
                         await renderer.xr.setSession(session);
                         arReady.value = true;
-                        canvas.addEventListener('click', shoot);
+                        
                         if (gameState.value.cubes.length > 0) spawnCubesAR();
                         renderer.setAnimationLoop(animateAR);
                     } catch (e) {
@@ -349,14 +359,15 @@
                     if(!renderer?.xr.isPresenting) return;
                     
                     const projectileGeo = new THREE.SphereGeometry(0.1, 8, 8);
-                    const projectileMat = new THREE.MeshBasicMaterial({ color: 0x00ffff });
+                    const projectileMat = new THREE.MeshBasicMaterial({ color: 0x00ffff, toneMapped: false });
                     const projectile = new THREE.Mesh(projectileGeo, projectileMat);
-
-                    const controller = renderer.xr.getController(0);
-                    const velocity = new THREE.Vector3(0, 0, -1).applyQuaternion(controller.quaternion);
+                    
+                    const velocity = new THREE.Vector3(0, 0, -1);
+                    velocity.applyQuaternion(controller.quaternion);
                     
                     projectile.position.copy(controller.position);
-                    projectile.userData.velocity = velocity.multiplyScalar(0.2);
+                    projectile.userData.velocity = velocity;
+                    projectile.userData.speed = 20; // units per second
                     projectiles.push(projectile);
                     scene.add(projectile);
                 }
@@ -364,17 +375,22 @@
                 function animateAR(time, frame) {
                     if (!renderer?.xr.isPresenting) return;
                     
+                    const delta = clock.getDelta();
+
                     projectiles.forEach((p, index) => {
-                        p.position.add(p.userData.velocity);
-                        if(p.position.length() > 50) {
+                        const moveDistance = p.userData.speed * delta;
+                        p.position.addScaledVector(p.userData.velocity, moveDistance);
+
+                        if(p.position.length() > 100) {
                            scene.remove(p);
                            projectiles.splice(index, 1);
                         } else {
                            // Collision detection
-                           cubeMeshes.forEach((cube, cubeIndex) => {
+                           for (let i = cubeMeshes.length - 1; i >= 0; i--) {
+                               const cube = cubeMeshes[i];
                                if (p.position.distanceTo(cube.position) < 1.0) {
                                    scene.remove(cube);
-                                   cubeMeshes.splice(cubeIndex, 1);
+                                   cubeMeshes.splice(i, 1);
                                    scene.remove(p);
                                    projectiles.splice(index, 1);
 
@@ -382,8 +398,9 @@
                                    gameState.value.cubes = gameState.value.cubes.filter(c => c.id !== cubeId);
                                    gameState.value.score++;
                                    sendData({ type: 'gameState', payload: gameState.value });
+                                   break; // Exit inner loop since projectile is gone
                                }
-                           });
+                           }
                         }
                     });
 
@@ -398,10 +415,18 @@
                     initializePeer(id);
                 };
 
-                onMounted(() => { loading.value = false; });
+                onMounted(() => {
+                    loading.value = false;
+                    if (remoteVideo.value) {
+                         remoteVideo.value.addEventListener('playing', () => {
+                            console.log("Remote video has started playing.");
+                            videoReady.value = true;
+                        });
+                    }
+                });
 
                 return {
-                    loading, appMode, peerId, remotePeerId, isConnected, arReady, statusMessage, errorMessage,
+                    loading, appMode, peerId, remotePeerId, isConnected, arReady, videoReady, statusMessage, errorMessage,
                     startAsCaller: () => startAs('caller'),
                     startAsReceiver: () => startAs('receiver'),
                     makeCall, startARSession,
