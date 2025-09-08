@@ -163,7 +163,7 @@
                 });
                 
                 let scene, camera, renderer, videoTexture, cubeMeshes = [], projectiles = [], controller, clock;
-                let callerScene, callerCamera, callerRenderer, callerVideoTexture, callerCubeMeshes = [], callerProjectiles = [];
+                let callerScene, callerCamera, callerRenderer, callerVideoTexture, callerCubeMeshes = [], callerProjectiles = [], callerClock;
 
                 const distanceToTarget = computed(() => {
                     if (gameState.value.targetGps && gpsData.value.lat) {
@@ -432,11 +432,12 @@
                     const light = new THREE.HemisphereLight(0xffffff, 0xbbbbff, 1);
                     callerScene.add(light);
                     
+                    callerClock = new THREE.Clock();
                     animateCallerAR();
                 }
 
                 function updateCallerARScene() {
-                    if (!callerScene) return;
+                    if (!callerScene || !gpsData.value.lat) return;
                     const currentCubeIds = callerCubeMeshes.map(c => c.userData.id);
                     const newCubeIds = gameState.value.cubes.map(c => c.id);
 
@@ -460,7 +461,8 @@
                         const mesh = callerCubeMeshes.find(m => m.userData.id === cubeData.id);
                         if(mesh) {
                             const bearing = calculateBearing(gpsData.value.lat, gpsData.value.lon, cubeData.lat, cubeData.lon);
-                            const angleRad = (bearing * Math.PI / 180);
+                            // Constrain angle to be in front of the camera
+                            let angleRad = (bearing * Math.PI / 180);
                             mesh.position.set(cubeData.distance * Math.sin(angleRad), (Math.random() - 0.5) * 5, -cubeData.distance * Math.cos(angleRad));
                         }
                     });
@@ -471,10 +473,11 @@
                     const projectileGeo = new THREE.SphereGeometry(0.1, 8, 8);
                     const projectileMat = new THREE.MeshBasicMaterial({ color: 0x00ffff });
                     const projectile = new THREE.Mesh(projectileGeo, projectileMat);
-
-                    const velocity = new THREE.Vector3(0, 0, -1).applyQuaternion(new THREE.Quaternion().fromArray(quat));
                     
-                    projectile.position.fromArray(pos);
+                    // Spawn projectile from center of screen and move forward
+                    projectile.position.set(0, 0, 0);
+                    const velocity = new THREE.Vector3(0, 0, -1);
+
                     projectile.userData.velocity = velocity;
                     projectile.userData.speed = 20;
                     callerProjectiles.push(projectile);
@@ -483,11 +486,12 @@
 
                 function animateCallerAR() {
                     requestAnimationFrame(animateCallerAR);
-                    const delta = clock?.getDelta() || 0.016;
+                    if (!callerClock) return;
+                    const delta = callerClock.getDelta();
 
                     callerProjectiles.forEach((p, index) => {
                         p.position.addScaledVector(p.userData.velocity, p.userData.speed * delta);
-                         if (p.position.length() > 100) {
+                         if (p.position.z < -100) { // Check distance from camera
                            callerScene.remove(p); callerProjectiles.splice(index, 1);
                         }
                     });
