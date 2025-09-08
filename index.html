@@ -16,8 +16,8 @@
     <style>
         body { background-color: #1a1a1a; color: #f0f0f0; font-family: 'Inter', sans-serif; overflow: hidden; }
         video { width: 100%; height: 100%; object-fit: cover; }
-        #ar-canvas { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 10; }
-        #remote-video { display: none; } /* Video is rendered to canvas, not shown directly */
+        .ar-canvas { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 10; }
+        #remote-video, #local-video { display: none; } /* Video is rendered to canvas, not shown directly */
         .uppercase-input::placeholder { text-transform: none; }
         .crosshair {
             position: absolute;
@@ -55,32 +55,24 @@
         </div>
 
         <!-- Caller (Mobile) View -->
-        <div v-if="appMode === 'caller'" class="w-full max-w-lg text-center p-4">
-            <h2 class="text-2xl font-bold text-blue-400 mb-2">Mobile Player</h2>
-            <div v-if="!isConnected" class="space-y-4">
-                <input v-model="remotePeerId" @input="remotePeerId = remotePeerId.toUpperCase()" maxlength="6" type="text" placeholder="Enter 6-Character Quest ID" class="w-full p-3 bg-gray-700 rounded-lg text-center tracking-widest font-mono text-lg">
-                <button @click="makeCall" :disabled="!remotePeerId || !peerId || remotePeerId.length !== 6" class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg disabled:bg-gray-600">Call Meta Quest</button>
-            </div>
-            <div v-if="statusMessage" class="mt-4 p-3 rounded-lg" :class="errorMessage ? 'bg-red-900/50 text-red-300' : 'bg-gray-700/50 text-gray-300'">{{ statusMessage }}</div>
-            
-            <div v-if="isConnected" class="mt-4 text-left bg-gray-800 p-4 rounded-lg">
-                <div v-if="gameState.gameStatus === 'won'" class="text-center p-8">
-                    <h3 class="text-4xl font-bold text-green-400">YOU WIN!</h3>
-                    <p class="text-lg">You reached the target location.</p>
+        <div v-if="appMode === 'caller'" class="w-full h-screen text-center">
+            <div v-if="!isConnected" class="w-full h-full flex flex-col items-center justify-center p-4">
+                <h2 class="text-2xl font-bold text-blue-400 mb-2">Mobile Player</h2>
+                <div class="space-y-4 w-full max-w-lg">
+                    <input v-model="remotePeerId" @input="remotePeerId = remotePeerId.toUpperCase()" maxlength="6" type="text" placeholder="Enter 6-Character Quest ID" class="w-full p-3 bg-gray-700 rounded-lg text-center tracking-widest font-mono text-lg">
+                    <button @click="makeCall" :disabled="!remotePeerId || !peerId || remotePeerId.length !== 6" class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg disabled:bg-gray-600">Call Meta Quest</button>
                 </div>
-                <div v-else>
-                    <h3 class="text-lg font-semibold text-green-400 pb-2 mb-2">Objective: Navigate to Target</h3>
-                    <p class="text-2xl font-mono">Distance to Target: <strong>{{ distanceToTarget.toFixed(0) }} meters</strong></p>
-                    <div class="mt-4 p-4 bg-gray-900 rounded-lg h-64 w-64 mx-auto relative overflow-hidden" id="radar">
-                        <!-- Player Icon -->
-                        <div class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-4 h-4 bg-cyan-400 rounded-full border-2 border-white"></div>
-                        <!-- Target Icon -->
-                        <div v-if="gameState.targetGps" class="absolute" :style="getTargetPositionOnRadar">
-                           <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 text-yellow-400" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" /></svg>
-                        </div>
-                        <!-- Cube Icons -->
-                        <div v-for="cube in gameState.cubes" :key="cube.id" class="absolute w-3 h-3 bg-red-500 rounded-full" :style="getCubePositionOnRadar(cube)"></div>
-                    </div>
+                <div v-if="statusMessage" class="mt-4 p-3 rounded-lg" :class="errorMessage ? 'bg-red-900/50 text-red-300' : 'bg-gray-700/50 text-gray-300'">{{ statusMessage }}</div>
+            </div>
+
+            <div v-if="isConnected" class="w-full h-full relative">
+                <canvas id="caller-ar-canvas" class="ar-canvas"></canvas>
+                <div v-if="gameState.gameStatus === 'won'" class="absolute inset-0 bg-black/80 flex items-center justify-center z-50">
+                    <h3 class="text-6xl font-bold text-green-400">TARGET REACHED!</h3>
+                </div>
+                <div class="absolute top-8 left-8 bg-black/60 p-4 rounded-lg text-white font-mono shadow-xl text-center">
+                    <h3 class="text-lg font-bold text-yellow-400">TARGET DISTANCE</h3>
+                    <p class="text-3xl">{{ distanceToTarget.toFixed(0) }} m</p>
                 </div>
             </div>
         </div>
@@ -129,10 +121,11 @@
         </div>
         
         <video ref="remoteVideo" id="remote-video" autoplay playsinline></video>
+        <video ref="localVideo" id="local-video" autoplay playsinline muted></video>
     </div>
 
     <script type="module">
-        const { createApp, ref, onMounted, watch, computed } = Vue;
+        const { createApp, ref, onMounted, watch, computed, nextTick } = Vue;
 
         createApp({
             setup() {
@@ -152,6 +145,7 @@
                 const localStream = ref(null);
                 const remoteStream = ref(null);
                 const remoteVideo = ref(null);
+                const localVideo = ref(null);
                 
                 const gpsData = ref({});
                 let gpsWatchId = null;
@@ -164,6 +158,7 @@
                 });
                 
                 let scene, camera, renderer, videoTexture, cubeMeshes = [], projectiles = [], controller, clock;
+                let callerScene, callerCamera, callerRenderer, callerVideoTexture, callerCubeMeshes = [], callerProjectiles = [];
 
                 const distanceToTarget = computed(() => {
                     if (gameState.value.targetGps && gpsData.value.lat) {
@@ -171,30 +166,8 @@
                     }
                     return 0;
                 });
-
-                const getTargetPositionOnRadar = computed(() => getRadarPosition(gameState.value.targetGps));
-                const getCubePositionOnRadar = (cube) => getRadarPosition({ lat: cube.lat, lon: cube.lon });
                 
-                function getRadarPosition(targetCoords) {
-                    if (!targetCoords || !gpsData.value.lat) return { top: '50%', left: '50%'};
-                    const distance = calculateDistance(gpsData.value.lat, gpsData.value.lon, targetCoords.lat, targetCoords.lon);
-                    const bearing = calculateBearing(gpsData.value.lat, gpsData.value.lon, targetCoords.lat, targetCoords.lon);
-                    
-                    const radarRadius = 112;
-                    const maxDistance = 2000;
-                    const displayDistance = Math.min(distance, maxDistance) / maxDistance * radarRadius;
-
-                    const angleRad = (bearing - 90) * (Math.PI / 180);
-                    const x = displayDistance * Math.cos(angleRad);
-                    const y = displayDistance * Math.sin(angleRad);
-
-                    return {
-                        top: `calc(50% + ${y}px)`,
-                        left: `calc(50% + ${x}px)`,
-                        transform: 'translate(-50%, -50%)',
-                    };
-                }
-
+                // ... (Utility functions: getRadarPosition, calculateDistance, calculateBearing, generateRandomPoint remain the same)
                 function calculateDistance(lat1, lon1, lat2, lon2) {
                     const R = 6371e3;
                     const φ1 = lat1 * Math.PI/180, φ2 = lat2 * Math.PI/180;
@@ -222,6 +195,7 @@
                     const lon2 = lon1 + Math.atan2(Math.sin(brng)*Math.sin(d/R)*Math.cos(lat1), Math.cos(d/R)-Math.sin(lat1)*Math.sin(lat2));
                     return { lat: lat2 * 180/Math.PI, lon: lon2 * 180/Math.PI };
                 }
+
 
                 const initializePeer = (id) => {
                     peer.value = new Peer(id);
@@ -252,8 +226,15 @@
                     try {
                         const mobileStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: true });
                         localStream.value = mobileStream;
+                        localVideo.value.srcObject = mobileStream;
+                        localVideo.value.play();
+
                         conn.value = peer.value.connect(remotePeerId.value);
-                        conn.value.on('open', () => { isConnected.value = true; startGpsUpdates(); });
+                        conn.value.on('open', () => { 
+                            isConnected.value = true; 
+                            startGpsUpdates();
+                            nextTick(initCallerARScene);
+                        });
                         conn.value.on('data', handleData);
                         peer.value.call(remotePeerId.value, mobileStream);
                     } catch (err) { statusMessage.value = "Error: " + err.message; errorMessage.value = true; }
@@ -272,40 +253,56 @@
                 const sendData = (data) => { if (conn.value?.open) conn.value.send(data); };
                 
                 const handleData = (data) => {
-                    if (appMode.value === 'receiver' && data.type === 'gpsUpdate') {
-                        gpsData.value = data.payload;
-                        if (!gameState.value.targetGps) {
-                           initializeGame(data.payload.lat, data.payload.lon);
-                        } else {
-                           updateARScene();
-                           if(distanceToTarget.value < 1000 && gameState.value.gameStatus !== 'won') {
-                               gameState.value.gameStatus = 'won';
-                               sendData({ type: 'gameState', payload: gameState.value });
-                           }
+                    if (appMode.value === 'receiver') { // Receiver logic
+                        if (data.type === 'gpsUpdate') {
+                            gpsData.value = data.payload;
+                            if (!gameState.value.targetGps) {
+                               initializeGame(data.payload.lat, data.payload.lon);
+                            } else {
+                               updateARScene();
+                               if(distanceToTarget.value < 1000 && gameState.value.gameStatus !== 'won') {
+                                   gameState.value.gameStatus = 'won';
+                                   sendData({ type: 'gameState', payload: gameState.value });
+                               }
+                            }
+                        }
+                    } else { // Caller logic
+                        if (data.type === 'gameState') {
+                            gameState.value = data.payload;
+                            updateCallerARScene();
+                        }
+                        if (data.type === 'newProjectile') {
+                            spawnCallerProjectile(data.payload);
                         }
                     }
-                    if (appMode.value === 'caller' && data.type === 'gameState') {
-                        gameState.value = data.payload;
-                    }
                 };
+                
+                const startNewWave = () => {
+                    statusMessage.value = "Wave Cleared! New wave incoming!";
+                    // Use last known GPS to spawn new cubes
+                    if (gpsData.value.lat) {
+                       initializeGame(gpsData.value.lat, gpsData.value.lon);
+                    }
+                }
 
                 const initializeGame = (startLat, startLon) => {
                     gameState.value.targetGps = generateRandomPoint(startLat, startLon, 1500);
                     gameState.value.cubes = [...Array(5)].map((_, i) => ({
-                        id: `cube_${i}`, ...generateRandomPoint(startLat, startLon, Math.random() * 500)
+                        id: `cube_${i}`, 
+                        distance: Math.random() * 20 + 15, // 15m to 35m
+                        ...generateRandomPoint(startLat, startLon, Math.random() * 500)
                     }));
                     gameState.value.gameStatus = 'playing';
                     sendData({ type: 'gameState', payload: gameState.value });
                     if (arReady.value) spawnCubesAR();
+                    if (appMode.value === 'caller') updateCallerARScene();
                 };
 
+                // --- Receiver (Quest) AR ---
                 async function startARSession() {
                     const canvas = document.getElementById('ar-canvas');
-                    // This check is crucial now
                     if (!canvas || !remoteVideo.value || remoteVideo.value.readyState < 3) {
-                        statusMessage.value = "Video not ready. Please wait.";
-                        console.error("startARSession called before resources were ready. Canvas:", canvas, "Video:", remoteVideo.value);
-                        return;
+                        statusMessage.value = "Video not ready. Please wait."; return;
                     }
                     
                     renderer = new THREE.WebGLRenderer({ canvas, alpha: true });
@@ -320,9 +317,7 @@
                     
                     const light = new THREE.HemisphereLight(0xffffff, 0xbbbbff, 1);
                     scene.add(light);
-
                     clock = new THREE.Clock();
-
                     controller = renderer.xr.getController(0);
                     controller.addEventListener('select', shoot);
                     scene.add(controller);
@@ -334,13 +329,14 @@
                         
                         if (gameState.value.cubes.length > 0) spawnCubesAR();
                         renderer.setAnimationLoop(animateAR);
-                    } catch (e) {
-                        statusMessage.value = "Failed to start AR session.";
-                        console.error(e);
-                    }
+                    } catch (e) { statusMessage.value = "Failed to start AR session."; console.error(e); }
                 }
 
                 function spawnCubesAR() {
+                    // Clear old meshes
+                    cubeMeshes.forEach(c => scene.remove(c));
+                    cubeMeshes = [];
+                    
                     const geometry = new THREE.BoxGeometry();
                     const material = new THREE.MeshStandardMaterial({ color: 0xff00ff, roughness: 0.3 });
                     gameState.value.cubes.forEach(cubeData => {
@@ -359,8 +355,7 @@
                         if(cubeData) {
                             const bearing = calculateBearing(gpsData.value.lat, gpsData.value.lon, cubeData.lat, cubeData.lon);
                             const angleRad = (bearing * Math.PI / 180);
-                            const displayDistance = 15;
-                            mesh.position.set(displayDistance * Math.sin(angleRad), (Math.random() - 0.5) * 5, -displayDistance * Math.cos(angleRad));
+                            mesh.position.set(cubeData.distance * Math.sin(angleRad), (Math.random() - 0.5) * 5, -cubeData.distance * Math.cos(angleRad));
                         }
                     });
                 }
@@ -377,47 +372,133 @@
                     
                     projectile.position.copy(controller.position);
                     projectile.userData.velocity = velocity;
-                    projectile.userData.speed = 20; // units per second
+                    projectile.userData.speed = 20;
                     projectiles.push(projectile);
                     scene.add(projectile);
+                    
+                    // Sync projectile with caller
+                    sendData({ type: 'newProjectile', payload: { pos: controller.position.toArray(), quat: controller.quaternion.toArray() } });
                 }
 
-                function animateAR(time, frame) {
+                function animateAR() { /* ... Quest animation loop ... */ 
                     if (!renderer?.xr.isPresenting) return;
-                    
                     const delta = clock.getDelta();
-
                     projectiles.forEach((p, index) => {
                         const moveDistance = p.userData.speed * delta;
                         p.position.addScaledVector(p.userData.velocity, moveDistance);
-
-                        if(p.position.length() > 100) {
-                           scene.remove(p);
-                           projectiles.splice(index, 1);
+                        if (p.position.length() > 100) {
+                           scene.remove(p); projectiles.splice(index, 1);
                         } else {
-                           // Collision detection
                            for (let i = cubeMeshes.length - 1; i >= 0; i--) {
                                const cube = cubeMeshes[i];
-                               if (p.position.distanceTo(cube.position) < 1.0) {
+                               if (p.position.distanceTo(cube.position) < 1.2) { // Increased hit box
                                    scene.remove(cube);
                                    cubeMeshes.splice(i, 1);
                                    scene.remove(p);
                                    projectiles.splice(index, 1);
-
                                    const cubeId = cube.userData.id;
                                    gameState.value.cubes = gameState.value.cubes.filter(c => c.id !== cubeId);
                                    gameState.value.score++;
                                    sendData({ type: 'gameState', payload: gameState.value });
-                                   break; // Exit inner loop since projectile is gone
+                                   if(gameState.value.cubes.length === 0) {
+                                       startNewWave();
+                                   }
+                                   break;
                                }
                            }
                         }
                     });
-
                     if (videoTexture) videoTexture.needsUpdate = true;
                     cubeMeshes.forEach(mesh => mesh.rotation.y += 0.01);
                     renderer.render(scene, camera);
                 }
+
+                // --- Caller (Mobile) AR ---
+                function initCallerARScene() {
+                    const canvas = document.getElementById('caller-ar-canvas');
+                    if (!canvas || !localVideo.value || localVideo.value.readyState < 3) return;
+
+                    callerRenderer = new THREE.WebGLRenderer({ canvas, alpha: true });
+                    callerRenderer.setSize(window.innerWidth, window.innerHeight);
+                    
+                    callerScene = new THREE.Scene();
+                    callerCamera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
+                    callerCamera.position.z = 5;
+
+                    callerVideoTexture = new THREE.VideoTexture(localVideo.value);
+                    callerScene.background = callerVideoTexture;
+                    
+                    const light = new THREE.HemisphereLight(0xffffff, 0xbbbbff, 1);
+                    callerScene.add(light);
+                    
+                    animateCallerAR();
+                }
+
+                function updateCallerARScene() {
+                    if (!callerScene) return;
+                    // Sync cubes
+                    const currentCubeIds = callerCubeMeshes.map(c => c.userData.id);
+                    const newCubeIds = gameState.value.cubes.map(c => c.id);
+
+                    // Remove old cubes
+                    callerCubeMeshes = callerCubeMeshes.filter(mesh => {
+                        if (!newCubeIds.includes(mesh.userData.id)) {
+                            callerScene.remove(mesh);
+                            return false;
+                        }
+                        return true;
+                    });
+
+                    // Add new cubes
+                    const geometry = new THREE.BoxGeometry();
+                    const material = new THREE.MeshStandardMaterial({ color: 0xff00ff });
+                    gameState.value.cubes.forEach(cubeData => {
+                        if (!currentCubeIds.includes(cubeData.id)) {
+                             const cube = new THREE.Mesh(geometry, material);
+                             cube.userData.id = cubeData.id;
+                             callerCubeMeshes.push(cube);
+                             callerScene.add(cube);
+                        }
+                        // Update position
+                        const mesh = callerCubeMeshes.find(m => m.userData.id === cubeData.id);
+                        if(mesh) {
+                            const bearing = calculateBearing(gpsData.value.lat, gpsData.value.lon, cubeData.lat, cubeData.lon);
+                            const angleRad = (bearing * Math.PI / 180);
+                            mesh.position.set(cubeData.distance * Math.sin(angleRad), (Math.random() - 0.5) * 5, -cubeData.distance * Math.cos(angleRad));
+                        }
+                    });
+                }
+                
+                function spawnCallerProjectile({pos, quat}) {
+                    if (!callerScene) return;
+                    const projectileGeo = new THREE.SphereGeometry(0.1, 8, 8);
+                    const projectileMat = new THREE.MeshBasicMaterial({ color: 0x00ffff });
+                    const projectile = new THREE.Mesh(projectileGeo, projectileMat);
+
+                    const velocity = new THREE.Vector3(0, 0, -1).applyQuaternion(new THREE.Quaternion().fromArray(quat));
+                    
+                    projectile.position.fromArray(pos);
+                    projectile.userData.velocity = velocity;
+                    projectile.userData.speed = 20;
+                    callerProjectiles.push(projectile);
+                    callerScene.add(projectile);
+                }
+
+                function animateCallerAR() {
+                    requestAnimationFrame(animateCallerAR);
+                    const delta = clock?.getDelta() || 0.016;
+
+                    callerProjectiles.forEach((p, index) => {
+                        p.position.addScaledVector(p.userData.velocity, p.userData.speed * delta);
+                         if (p.position.length() > 100) {
+                           callerScene.remove(p); callerProjectiles.splice(index, 1);
+                        }
+                    });
+
+                    if(callerVideoTexture) callerVideoTexture.needsUpdate = true;
+                    if(callerRenderer) callerRenderer.render(callerScene, callerCamera);
+                }
+
 
                 const startAs = (mode) => {
                     appMode.value = mode;
@@ -428,7 +509,6 @@
                 watch(remoteVideo, (newVal) => {
                     if (newVal) {
                         newVal.addEventListener('playing', () => {
-                            console.log("Remote video has started playing.");
                             videoReady.value = true;
                         });
                     }
@@ -443,7 +523,8 @@
                     startAsCaller: () => startAs('caller'),
                     startAsReceiver: () => startAs('receiver'),
                     makeCall, startARSession,
-                    gpsData, gameState, distanceToTarget, getTargetPositionOnRadar, getCubePositionOnRadar, remoteVideo,
+                    gpsData, gameState, distanceToTarget,
+                    remoteVideo, localVideo,
                 };
             }
         }).mount('#app');
