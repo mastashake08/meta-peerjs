@@ -1,0 +1,16 @@
+{
+    "name": "Quest/Mobile AR Game",
+    "short_name": "AR Game",
+    "start_url": ".",
+    "display": "standalone",
+    "background_color": "#1a1a1a",
+    "theme_color": "#1a1a1a",
+    "description": "A two-player AR game for Meta Quest and a mobile device.",
+    "icons": [
+        {
+            "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'%3E%3Crect width='192' height='192' fill='%231a1a1a'/%3E%3Cpath d='M96 24v32m0 80v32m-72-48h32m80 0h32' stroke='%230ff' stroke-width='12' stroke-linecap='round'/%3E%3Cpath d='M48 48h96v96H48z' fill='none' stroke='%23f0f' stroke-width='12'/%3E%3C/svg%3E",
+            "sizes": "any",
+            "type": "image/svg+xml"
+        }
+    ]
+}
