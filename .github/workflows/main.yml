@@ -5,6 +5,7 @@ on:
     branches:
       - main # Or your default branch
 
+# This is the crucial addition. It grants the necessary permissions.
 permissions:
   contents: read
   pages: write
@@ -15,7 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Replace API keys
         run: |
