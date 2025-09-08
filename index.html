@@ -4,6 +4,22 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Quest/Mobile AR Game</title>
+    <!-- PWA Manifest -->
+    <meta name="theme-color" content="#1a1a1a"/>
+    <link rel="manifest" href="data:application/manifest+json,{
+        &quot;name&quot;: &quot;Quest/Mobile AR Game&quot;,
+        &quot;short_name&quot;: &quot;AR Game&quot;,
+        &quot;start_url&quot;: &quot;.&quot;,
+        &quot;display&quot;: &quot;standalone&quot;,
+        &quot;background_color&quot;: &quot;#1a1a1a&quot;,
+        &quot;theme_color&quot;: &quot;#1a1a1a&quot;,
+        &quot;description&quot;: &quot;A two-player AR game for Meta Quest and a mobile device.&quot;,
+        &quot;icons&quot;: [{
+            &quot;src&quot;: &quot;data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'%3E%3Crect width='192' height='192' fill='%231a1a1a'/%3E%3Cpath d='M96 24v32m0 80v32m-72-48h32m80 0h32' stroke='%230ff' stroke-width='12' stroke-linecap='round'/%3E%3Cpath d='M48 48h96v96H48z' fill='none' stroke='%23f0f' stroke-width='12'/%3E%3C/svg%3E&quot;,
+            &quot;sizes&quot;: &quot;any&quot;,
+            &quot;type&quot;: &quot;image/svg+xml&quot;
+        }]
+    }">
     <!-- Tailwind CSS for styling -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Vue 3 -->
@@ -51,6 +67,7 @@
                 <button @click="startAsCaller" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-lg shadow-lg">Mobile Device (Player)</button>
                 <button @click="startAsReceiver" class="bg-purple-600 hover:bg-purple-700 text-white font-bold py-3 px-6 rounded-lg shadow-lg">Meta Quest (Shooter)</button>
             </div>
+            <p v-if="pwaStatusMessage" class="mt-4 text-lg text-red-400">{{ pwaStatusMessage }}</p>
             <p class="text-sm text-gray-500 pt-8 max-w-md mx-auto"><strong>Instructions:</strong> Mobile player navigates to the target. Quest player shoots cubes.</p>
         </div>
 
@@ -132,6 +149,7 @@
                 const loading = ref(true);
                 const appMode = ref('selection');
                 const statusMessage = ref('');
+                const pwaStatusMessage = ref('');
                 const errorMessage = ref('');
                 
                 const peer = ref(null);
@@ -167,7 +185,6 @@
                     return 0;
                 });
                 
-                // ... (Utility functions: getRadarPosition, calculateDistance, calculateBearing, generateRandomPoint remain the same)
                 function calculateDistance(lat1, lon1, lat2, lon2) {
                     const R = 6371e3;
                     const φ1 = lat1 * Math.PI/180, φ2 = lat2 * Math.PI/180;
@@ -279,7 +296,6 @@
                 
                 const startNewWave = () => {
                     statusMessage.value = "Wave Cleared! New wave incoming!";
-                    // Use last known GPS to spawn new cubes
                     if (gpsData.value.lat) {
                        initializeGame(gpsData.value.lat, gpsData.value.lon);
                     }
@@ -289,7 +305,7 @@
                     gameState.value.targetGps = generateRandomPoint(startLat, startLon, 1500);
                     gameState.value.cubes = [...Array(5)].map((_, i) => ({
                         id: `cube_${i}`, 
-                        distance: Math.random() * 20 + 15, // 15m to 35m
+                        distance: Math.random() * 20 + 15,
                         ...generateRandomPoint(startLat, startLon, Math.random() * 500)
                     }));
                     gameState.value.gameStatus = 'playing';
@@ -333,7 +349,6 @@
                 }
 
                 function spawnCubesAR() {
-                    // Clear old meshes
                     cubeMeshes.forEach(c => scene.remove(c));
                     cubeMeshes = [];
                     
@@ -376,11 +391,10 @@
                     projectiles.push(projectile);
                     scene.add(projectile);
                     
-                    // Sync projectile with caller
                     sendData({ type: 'newProjectile', payload: { pos: controller.position.toArray(), quat: controller.quaternion.toArray() } });
                 }
 
-                function animateAR() { /* ... Quest animation loop ... */ 
+                function animateAR() { 
                     if (!renderer?.xr.isPresenting) return;
                     const delta = clock.getDelta();
                     projectiles.forEach((p, index) => {
@@ -391,7 +405,7 @@
                         } else {
                            for (let i = cubeMeshes.length - 1; i >= 0; i--) {
                                const cube = cubeMeshes[i];
-                               if (p.position.distanceTo(cube.position) < 1.2) { // Increased hit box
+                               if (p.position.distanceTo(cube.position) < 1.2) {
                                    scene.remove(cube);
                                    cubeMeshes.splice(i, 1);
                                    scene.remove(p);
@@ -436,11 +450,9 @@
 
                 function updateCallerARScene() {
                     if (!callerScene) return;
-                    // Sync cubes
                     const currentCubeIds = callerCubeMeshes.map(c => c.userData.id);
                     const newCubeIds = gameState.value.cubes.map(c => c.id);
 
-                    // Remove old cubes
                     callerCubeMeshes = callerCubeMeshes.filter(mesh => {
                         if (!newCubeIds.includes(mesh.userData.id)) {
                             callerScene.remove(mesh);
@@ -449,7 +461,6 @@
                         return true;
                     });
 
-                    // Add new cubes
                     const geometry = new THREE.BoxGeometry();
                     const material = new THREE.MeshStandardMaterial({ color: 0xff00ff });
                     gameState.value.cubes.forEach(cubeData => {
@@ -459,7 +470,6 @@
                              callerCubeMeshes.push(cube);
                              callerScene.add(cube);
                         }
-                        // Update position
                         const mesh = callerCubeMeshes.find(m => m.userData.id === cubeData.id);
                         if(mesh) {
                             const bearing = calculateBearing(gpsData.value.lat, gpsData.value.lon, cubeData.lat, cubeData.lon);
@@ -499,11 +509,20 @@
                     if(callerRenderer) callerRenderer.render(callerScene, callerCamera);
                 }
 
-
                 const startAs = (mode) => {
                     appMode.value = mode;
                     const id = [...Array(6)].map(() => "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"[Math.floor(Math.random() * 36)]).join('');
                     initializePeer(id);
+                };
+
+                const startAsCaller = () => startAs('caller');
+
+                const startAsReceiver = () => {
+                    if (typeof navigator.xr === 'undefined' || !navigator.xr.isSessionSupported('immersive-vr')) {
+                        pwaStatusMessage.value = "This device/browser does not support WebXR and cannot be the Shooter.";
+                        return;
+                    }
+                    startAs('receiver');
                 };
                 
                 watch(remoteVideo, (newVal) => {
@@ -516,18 +535,64 @@
 
                 onMounted(() => {
                     loading.value = false;
+                    // PWA Service Worker Registration
+                    if ('serviceWorker' in navigator) {
+                      const swScriptEl = document.getElementById('sw-script');
+                      if (swScriptEl) {
+                          const swScript = swScriptEl.textContent;
+                          const swBlob = new Blob([swScript], {type: 'application/javascript'});
+                          const swUrl = URL.createObjectURL(swBlob);
+
+                          navigator.serviceWorker.register(swUrl)
+                            .then(registration => {
+                              console.log('Service Worker registered with scope:', registration.scope);
+                            }).catch(error => {
+                              console.error('Service Worker registration failed:', error);
+                            });
+                      }
+                    }
                 });
 
                 return {
-                    loading, appMode, peerId, remotePeerId, isConnected, arReady, videoReady, statusMessage, errorMessage,
-                    startAsCaller: () => startAs('caller'),
-                    startAsReceiver: () => startAs('receiver'),
+                    loading, appMode, peerId, remotePeerId, isConnected, arReady, videoReady, statusMessage, errorMessage, pwaStatusMessage,
+                    startAsCaller,
+                    startAsReceiver,
                     makeCall, startARSession,
                     gpsData, gameState, distanceToTarget,
                     remoteVideo, localVideo,
                 };
             }
         }).mount('#app');
+    </script>
+    <script type="text/plain" id="sw-script">
+        const CACHE_NAME = 'ar-game-cache-v1';
+        const urlsToCache = ['./']; // Cache the main HTML file
+
+        self.addEventListener('install', event => {
+          event.waitUntil(
+            caches.open(CACHE_NAME)
+              .then(cache => {
+                console.log('Service Worker: Caching files');
+                return cache.addAll(urlsToCache);
+              })
+              .catch(err => {
+                console.error('Service Worker: Caching failed', err);
+              })
+          );
+        });
+
+        self.addEventListener('fetch', event => {
+          event.respondWith(
+            caches.match(event.request)
+              .then(response => {
+                // Cache hit - return response
+                if (response) {
+                  return response;
+                }
+                return fetch(event.request);
+              })
+          );
+        });
     </script>
 </body>
 </html>
