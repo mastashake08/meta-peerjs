@@ -7,39 +7,32 @@
     <!-- PWA Manifest -->
     <meta name="theme-color" content="#1a1a1a"/>
     <link rel="manifest" href="manifest.json">
-    <!-- Tailwind CSS for styling -->
+    <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Vue 3 -->
     <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
     <!-- PeerJS -->
     <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
-    <!-- Three.js for 3D rendering -->
+    <!-- Three.js -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <!-- Stripe.js -->
+    <script src="https://js.stripe.com/v3/"></script>
+    <!-- Firebase -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+        import { getFirestore, doc, getDoc, setDoc } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+        window.firebase = { initializeApp, getAuth, signInAnonymously, onAuthStateChanged, getFirestore, doc, getDoc, setDoc };
+    </script>
     
     <style>
         body { background-color: #1a1a1a; color: #f0f0f0; font-family: 'Inter', sans-serif; overflow: hidden; }
-        video { width: 100%; height: 100%; object-fit: cover; }
         .ar-canvas { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 10; }
-        #remote-video, #local-video { display: none; } /* Video is rendered to canvas, not shown directly */
-        .uppercase-input::placeholder { text-transform: none; }
+        #remote-video, #local-video { display: none; }
         .crosshair {
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            width: 30px;
-            height: 30px;
-            border: 2px solid rgba(0, 255, 255, 0.7);
-            border-radius: 50%;
-            z-index: 20;
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            width: 30px; height: 30px; border: 2px solid rgba(0, 255, 255, 0.7); border-radius: 50%; z-index: 20;
         }
-        .crosshair::before, .crosshair::after {
-            content: '';
-            position: absolute;
-            background-color: rgba(0, 255, 255, 0.7);
-        }
-        .crosshair::before { width: 2px; height: 10px; top: -6px; left: 12px; }
-        .crosshair::after { height: 2px; width: 10px; left: -6px; top: 12px; }
     </style>
 </head>
 <body class="antialiased">
@@ -55,20 +48,19 @@
                 <button @click="startAsReceiver" class="bg-purple-600 hover:bg-purple-700 text-white font-bold py-3 px-6 rounded-lg shadow-lg">Meta Quest (Shooter)</button>
             </div>
             <p v-if="pwaStatusMessage" class="mt-4 text-lg text-red-400">{{ pwaStatusMessage }}</p>
-            <p class="text-sm text-gray-500 pt-8 max-w-md mx-auto"><strong>Instructions:</strong> Mobile player navigates to the target. Quest player shoots cubes.</p>
         </div>
 
         <!-- Caller (Mobile) View -->
         <div v-if="appMode === 'caller'" class="w-full h-screen text-center">
-            <div v-if="!isConnected" class="w-full h-full flex flex-col items-center justify-center p-4">
+             <div v-if="!isConnected" class="w-full h-full flex flex-col items-center justify-center p-4">
                 <h2 class="text-2xl font-bold text-blue-400 mb-2">Mobile Player</h2>
                 <div class="space-y-4 w-full max-w-lg">
                     <input v-model="remotePeerId" @input="remotePeerId = remotePeerId.toUpperCase()" maxlength="6" type="text" placeholder="Enter 6-Character Quest ID" class="w-full p-3 bg-gray-700 rounded-lg text-center tracking-widest font-mono text-lg">
                     <button @click="makeCall" :disabled="!remotePeerId || !peerId || remotePeerId.length !== 6" class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg disabled:bg-gray-600">Call Meta Quest</button>
+                    <button @click="showStore = true" class="w-full bg-yellow-500 hover:bg-yellow-600 text-black font-bold py-2 px-4 rounded-lg">Store</button>
                 </div>
                 <div v-if="statusMessage" class="mt-4 p-3 rounded-lg" :class="errorMessage ? 'bg-red-900/50 text-red-300' : 'bg-gray-700/50 text-gray-300'">{{ statusMessage }}</div>
             </div>
-
             <div v-if="isConnected" class="w-full h-full relative">
                 <canvas id="caller-ar-canvas" class="ar-canvas"></canvas>
                 <div v-if="gameState.gameStatus === 'won'" class="absolute inset-0 bg-black/80 flex items-center justify-center z-50">
@@ -89,19 +81,17 @@
                 <div class="bg-gray-800 p-4 rounded-lg inline-block shadow-lg">
                     <p class="text-4xl font-mono tracking-widest uppercase">{{ peerId || '...' }}</p>
                 </div>
+                <button @click="showStore = true" class="mt-6 bg-yellow-500 hover:bg-yellow-600 text-black font-bold py-2 px-4 rounded-lg">Store</button>
                 <p class="mt-4 text-gray-400">{{ statusMessage }}</p>
             </div>
-             
             <div v-if="isConnected" class="w-full h-full relative">
                 <canvas id="ar-canvas" :class="arReady ? '' : 'hidden'"></canvas>
-
                 <div v-if="!arReady" class="w-full h-full flex items-center justify-center text-center">
                     <div>
                         <button @click="startARSession" :disabled="!videoReady" class="bg-green-600 hover:bg-green-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-bold py-4 px-8 rounded-lg text-2xl shadow-lg">Start AR</button>
                         <p v-if="!videoReady" class="text-gray-400 mt-4">Waiting for video stream from mobile device...</p>
                     </div>
                 </div>
-
                 <div v-if="arReady">
                     <div class="crosshair"></div>
                     <div class="absolute bottom-8 left-8 bg-black/60 p-4 rounded-lg text-white font-mono shadow-xl text-sm">
@@ -121,6 +111,31 @@
                          <h3 class="text-6xl font-bold text-green-400">TARGET REACHED!</h3>
                     </div>
                 </div>
+            </div>
+        </div>
+
+        <!-- Store Modal -->
+        <div v-if="showStore" class="absolute inset-0 bg-black/80 flex items-center justify-center z-50">
+            <div class="bg-gray-800 p-8 rounded-lg max-w-lg w-full">
+                <h2 class="text-3xl font-bold mb-6 text-yellow-400">Store</h2>
+                <div class="space-y-4">
+                    <!-- Pro Version Purchase -->
+                    <div>
+                        <h3 class="text-xl font-semibold">Pro Version - $4.99</h3>
+                        <p class="text-gray-400">Unlock custom game modes and an ad-free experience.</p>
+                        <button v-if="!userData.isPro" @click="purchase('pro')" class="mt-2 w-full bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded">Purchase</button>
+                        <p v-else class="text-green-400 mt-2">Purchased!</p>
+                    </div>
+                    <!-- Projectile Skins -->
+                    <div>
+                        <h3 class="text-xl font-semibold">Projectile Skins</h3>
+                        <div class="grid grid-cols-3 gap-4 mt-2">
+                            <button @click="purchase('skin_fire')" :class="{'ring-2 ring-yellow-400': userData.skins.includes('skin_fire')}" class="p-4 bg-gray-700 rounded">Fireball ($0.99)</button>
+                            <button @click="purchase('skin_laser')" :class="{'ring-2 ring-yellow-400': userData.skins.includes('skin_laser')}" class="p-4 bg-gray-700 rounded">Laser ($0.99)</button>
+                        </div>
+                    </div>
+                </div>
+                <button @click="showStore = false" class="mt-8 bg-gray-600 hover:bg-gray-700 text-white font-bold py-2 px-4 rounded">Close</button>
             </div>
         </div>
         
@@ -164,6 +179,59 @@
                 
                 let scene, camera, renderer, videoTexture, cubeMeshes = [], projectiles = [], controller, clock;
                 let callerScene, callerCamera, callerRenderer, callerVideoTexture, callerCubeMeshes = [], callerProjectiles = [], callerClock;
+
+                const showStore = ref(false);
+                const userData = ref({ isPro: false, skins: [], uid: null });
+                let stripe, db, auth;
+
+                // --- Firebase and Stripe Initialization ---
+                async function initFirebaseAndStripe() {
+                    // IMPORTANT: Replace with your actual Firebase config
+                    const firebaseConfig = { apiKey: "...", authDomain: "...", projectId: "...", storageBucket: "...", messagingSenderId: "...", appId: "..." };
+                    const app = window.firebase.initializeApp(firebaseConfig);
+                    auth = window.firebase.getAuth(app);
+                    db = window.firebase.getFirestore(app);
+
+                    // IMPORTANT: Replace with your actual Stripe publishable key
+                    // stripe = Stripe('pk_test_...'); 
+
+                    window.firebase.onAuthStateChanged(auth, async user => {
+                        if (user) {
+                            userData.value.uid = user.uid;
+                            const userDoc = await window.firebase.getDoc(window.firebase.doc(db, "users", user.uid));
+                            if (userDoc.exists()) {
+                                const data = userDoc.data();
+                                userData.value.isPro = data.isPro || false;
+                                userData.value.skins = data.skins || [];
+                            }
+                        } else {
+                            await window.firebase.signInAnonymously(auth);
+                        }
+                    });
+                }
+
+                // --- Purchase Logic ---
+                async function purchase(itemId) {
+                    // This is a placeholder for a server-side checkout session creation
+                    // In a real app, you would make a call to your backend here
+                    console.log(`Initiating purchase for ${itemId}`);
+                    const priceMap = { pro: 'price_123abc', skin_fire: 'price_456def' }; // Replace with Stripe Price IDs
+                    
+                    // Simulate updating the user's data after a successful purchase
+                    if (itemId === 'pro') {
+                        userData.value.isPro = true;
+                    } else if (itemId.startsWith('skin_')) {
+                        if (!userData.value.skins.includes(itemId)) {
+                            userData.value.skins.push(itemId);
+                        }
+                    }
+                    await window.firebase.setDoc(window.firebase.doc(db, "users", userData.value.uid), {
+                        isPro: userData.value.isPro,
+                        skins: userData.value.skins
+                    }, { merge: true });
+
+                    alert('Purchase successful (simulation)!');
+                }
 
                 const distanceToTarget = computed(() => {
                     if (gameState.value.targetGps && gpsData.value.lat) {
@@ -461,8 +529,7 @@
                         const mesh = callerCubeMeshes.find(m => m.userData.id === cubeData.id);
                         if(mesh) {
                             const bearing = calculateBearing(gpsData.value.lat, gpsData.value.lon, cubeData.lat, cubeData.lon);
-                            // Constrain angle to be in front of the camera
-                            let angleRad = (bearing * Math.PI / 180);
+                            const angleRad = (bearing * Math.PI / 180);
                             mesh.position.set(cubeData.distance * Math.sin(angleRad), (Math.random() - 0.5) * 5, -cubeData.distance * Math.cos(angleRad));
                         }
                     });
@@ -474,7 +541,6 @@
                     const projectileMat = new THREE.MeshBasicMaterial({ color: 0x00ffff });
                     const projectile = new THREE.Mesh(projectileGeo, projectileMat);
                     
-                    // Spawn projectile from center of screen and move forward
                     projectile.position.set(0, 0, 0);
                     const velocity = new THREE.Vector3(0, 0, -1);
 
@@ -491,7 +557,7 @@
 
                     callerProjectiles.forEach((p, index) => {
                         p.position.addScaledVector(p.userData.velocity, p.userData.speed * delta);
-                         if (p.position.z < -100) { // Check distance from camera
+                         if (p.position.z < -100) {
                            callerScene.remove(p); callerProjectiles.splice(index, 1);
                         }
                     });
@@ -526,7 +592,7 @@
 
                 onMounted(() => {
                     loading.value = false;
-                    // PWA Service Worker Registration
+                    initFirebaseAndStripe();
                     if ('serviceWorker' in navigator) {
                       navigator.serviceWorker.register('./sw.js')
                         .then(registration => {
@@ -544,6 +610,7 @@
                     makeCall, startARSession,
                     gpsData, gameState, distanceToTarget,
                     remoteVideo, localVideo,
+                    showStore, userData, purchase,
                 };
             }
         }).mount('#app');
