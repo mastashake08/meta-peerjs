@@ -259,7 +259,22 @@
                     statusMessage.value = `Connecting to ${remotePeerId.value}...`;
                     try {
                         console.log('[CALLER] Requesting camera and microphone...');
-                        const mobileStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+                        let mobileStream;
+                        const environmentConstraints = { 
+                            video: { facingMode: 'environment' }, 
+                            audio: true 
+                        };
+
+                        try {
+                            console.log('[CALLER] Attempting to get environment-facing camera...');
+                            mobileStream = await navigator.mediaDevices.getUserMedia(environmentConstraints);
+                        } catch (err) {
+                            console.warn('[CALLER] Environment-facing camera failed, falling back to default camera.', err);
+                            statusMessage.value = "Rear camera not found, using front camera.";
+                            // Fallback to any camera if the environment one fails
+                            mobileStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+                        }
+                        
                         console.log('[CALLER] Media stream acquired successfully.');
                         localStream.value = mobileStream;
                         
