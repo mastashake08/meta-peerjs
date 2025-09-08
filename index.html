@@ -3,408 +3,409 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Quest/Mobile PeerJS Link</title>
+    <title>Quest/Mobile AR Game</title>
     <!-- Tailwind CSS for styling -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Vue 3 -->
     <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
     <!-- PeerJS -->
     <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+    <!-- Three.js for 3D rendering -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     
     <style>
-        /* Simple dark theme for the body */
-        body {
-            background-color: #1a1a1a;
-            color: #f0f0f0;
-            font-family: 'Inter', sans-serif;
+        body { background-color: #1a1a1a; color: #f0f0f0; font-family: 'Inter', sans-serif; overflow: hidden; }
+        video { width: 100%; height: 100%; object-fit: cover; }
+        #ar-canvas { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 10; }
+        #remote-video { display: none; } /* Video is rendered to canvas, not shown directly */
+        .uppercase-input::placeholder { text-transform: none; }
+        .crosshair {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 30px;
+            height: 30px;
+            border: 2px solid rgba(0, 255, 255, 0.7);
+            border-radius: 50%;
+            z-index: 20;
         }
-        /* Custom styles for video elements to ensure they are handled correctly */
-        video {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
-            transform: scaleX(-1); /* Mirror the local video for a more natural feel */
+        .crosshair::before, .crosshair::after {
+            content: '';
+            position: absolute;
+            background-color: rgba(0, 255, 255, 0.7);
         }
-        /* Ensure remote video is not mirrored */
-        #remote-video {
-            transform: scaleX(1);
-        }
-        /* Force uppercase on input for consistency */
-        .uppercase-input::placeholder {
-            text-transform: none;
-        }
+        .crosshair::before { width: 2px; height: 10px; top: -6px; left: 12px; }
+        .crosshair::after { height: 2px; width: 10px; left: -6px; top: 12px; }
     </style>
 </head>
 <body class="antialiased">
 
-    <div id="app" class="min-h-screen flex flex-col items-center justify-center p-4">
+    <div id="app" class="min-h-screen flex flex-col items-center justify-center">
         
-        <!-- App Loading State -->
-        <div v-if="loading" class="text-center">
-            <h1 class="text-3xl font-bold text-cyan-400">Loading...</h1>
-        </div>
+        <div v-if="loading" class="text-center"><h1 class="text-3xl font-bold text-cyan-400">Loading...</h1></div>
 
-        <!-- Role Selection Screen -->
-        <div v-if="appMode === 'selection'" class="text-center space-y-8">
-            <h1 class="text-4xl font-bold tracking-tight">Quest/Mobile Link</h1>
-            <p class="text-lg text-gray-400">Select the role for this device.</p>
+        <div v-if="appMode === 'selection'" class="text-center space-y-8 p-4">
+            <h1 class="text-4xl font-bold tracking-tight">Quest/Mobile AR Game</h1>
             <div class="flex flex-col md:flex-row gap-4 justify-center">
-                <button @click="startAsCaller" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-lg shadow-lg transition-transform transform hover:scale-105">
-                    I am the Mobile Device (Caller)
-                </button>
-                <button @click="startAsReceiver" class="bg-purple-600 hover:bg-purple-700 text-white font-bold py-3 px-6 rounded-lg shadow-lg transition-transform transform hover:scale-105">
-                    I am the Meta Quest (Receiver)
-                </button>
+                <button @click="startAsCaller" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-lg shadow-lg">Mobile Device (Player)</button>
+                <button @click="startAsReceiver" class="bg-purple-600 hover:bg-purple-700 text-white font-bold py-3 px-6 rounded-lg shadow-lg">Meta Quest (Shooter)</button>
             </div>
-             <p class="text-sm text-gray-500 pt-8 max-w-md mx-auto">
-                <strong>Instructions:</strong> Open this page on both devices. Select "Mobile" on your phone and "Meta Quest" on your headset. Then, on the mobile device, enter the Quest's 6-character ID and press "Call".
-            </p>
+            <p class="text-sm text-gray-500 pt-8 max-w-md mx-auto"><strong>Instructions:</strong> Mobile player navigates to the target. Quest player shoots cubes.</p>
         </div>
 
         <!-- Caller (Mobile) View -->
-        <div v-if="appMode === 'caller'" class="w-full max-w-lg text-center">
-            <h2 class="text-2xl font-bold text-blue-400 mb-2">Mobile Device (Caller)</h2>
-            <div class="bg-gray-800 p-4 rounded-lg mb-4">
-                <p class="text-sm text-gray-400">Your Peer ID:</p>
-                <p class="text-lg font-mono bg-gray-900 px-2 py-1 rounded uppercase">{{ peerId || 'Initializing...' }}</p>
-            </div>
-            
+        <div v-if="appMode === 'caller'" class="w-full max-w-lg text-center p-4">
+            <h2 class="text-2xl font-bold text-blue-400 mb-2">Mobile Player</h2>
             <div v-if="!isConnected" class="space-y-4">
-                <input v-model="remotePeerId" @input="remotePeerId = remotePeerId.toUpperCase()" maxlength="6" type="text" placeholder="Enter 6-Character Quest ID" class="w-full p-3 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 uppercase-input uppercase text-center tracking-widest font-mono text-lg">
-                <button @click="makeCall" :disabled="!remotePeerId || !peerId || remotePeerId.length !== 6" class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg shadow-lg transition-all disabled:bg-gray-600 disabled:cursor-not-allowed">
-                    Call Meta Quest
-                </button>
+                <input v-model="remotePeerId" @input="remotePeerId = remotePeerId.toUpperCase()" maxlength="6" type="text" placeholder="Enter 6-Character Quest ID" class="w-full p-3 bg-gray-700 rounded-lg text-center tracking-widest font-mono text-lg">
+                <button @click="makeCall" :disabled="!remotePeerId || !peerId || remotePeerId.length !== 6" class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg disabled:bg-gray-600">Call Meta Quest</button>
             </div>
-
-            <div v-if="statusMessage" class="mt-4 p-3 rounded-lg" :class="errorMessage ? 'bg-red-900/50 text-red-300' : 'bg-gray-700/50 text-gray-300'">
-                {{ statusMessage }}
-            </div>
-
+            <div v-if="statusMessage" class="mt-4 p-3 rounded-lg" :class="errorMessage ? 'bg-red-900/50 text-red-300' : 'bg-gray-700/50 text-gray-300'">{{ statusMessage }}</div>
+            
             <div v-if="isConnected" class="mt-4 text-left bg-gray-800 p-4 rounded-lg">
-                <h3 class="text-lg font-semibold text-green-400 border-b border-gray-600 pb-2 mb-2">Connected - Streaming GPS</h3>
-                <div class="grid grid-cols-2 gap-2 text-sm">
-                    <p><strong>Lat:</strong> {{ gpsData.lat?.toFixed(5) || 'N/A' }}</p>
-                    <p><strong>Lon:</strong> {{ gpsData.lon?.toFixed(5) || 'N/A' }}</p>
-                    <p><strong>Altitude:</strong> {{ gpsData.alt ? gpsData.alt.toFixed(2) + ' m' : 'N/A' }}</p>
-                    <p><strong>Speed:</strong> {{ gpsData.speed ? (gpsData.speed * 2.237).toFixed(2) + ' mph' : 'N/A' }}</p>
-                    <p><strong>Bearing:</strong> {{ gpsData.bearing ? gpsData.bearing.toFixed(1) + '°' : 'N/A' }}</p>
+                <div v-if="gameState.gameStatus === 'won'" class="text-center p-8">
+                    <h3 class="text-4xl font-bold text-green-400">YOU WIN!</h3>
+                    <p class="text-lg">You reached the target location.</p>
+                </div>
+                <div v-else>
+                    <h3 class="text-lg font-semibold text-green-400 pb-2 mb-2">Objective: Navigate to Target</h3>
+                    <p class="text-2xl font-mono">Distance to Target: <strong>{{ distanceToTarget.toFixed(0) }} meters</strong></p>
+                    <div class="mt-4 p-4 bg-gray-900 rounded-lg h-64 w-64 mx-auto relative overflow-hidden" id="radar">
+                        <!-- Player Icon -->
+                        <div class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-4 h-4 bg-cyan-400 rounded-full border-2 border-white"></div>
+                        <!-- Target Icon -->
+                        <div v-if="gameState.targetGps" class="absolute" :style="getTargetPositionOnRadar">
+                           <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 text-yellow-400" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" /></svg>
+                        </div>
+                        <!-- Cube Icons -->
+                        <div v-for="cube in gameState.cubes" :key="cube.id" class="absolute w-3 h-3 bg-red-500 rounded-full" :style="getCubePositionOnRadar(cube)"></div>
+                    </div>
                 </div>
             </div>
-
-            <div class="mt-4 rounded-lg overflow-hidden shadow-2xl relative w-full aspect-video" v-show="localStream">
-                 <video ref="localVideo" autoplay playsinline muted class="bg-gray-900"></video>
-                 <p class="absolute bottom-2 left-2 bg-black/50 px-2 py-1 rounded text-xs">Your Camera</p>
-            </div>
-            <video ref="remoteVideo" autoplay playsinline class="hidden"></video>
         </div>
 
         <!-- Receiver (Meta Quest) View -->
-        <div v-if="appMode === 'receiver'" class="w-full h-screen flex flex-col items-center justify-center p-0 md:p-4">
-             <div v-if="!isConnected" class="text-center">
-                <h2 class="text-3xl font-bold text-purple-400 mb-4">Meta Quest (Receiver)</h2>
-                <p class="text-lg text-gray-300 mb-2">Your 6-Character Peer ID is:</p>
+        <div v-if="appMode === 'receiver'" class="w-full h-screen">
+            <div v-if="!isConnected" class="w-full h-full flex flex-col items-center justify-center">
+                <h2 class="text-3xl font-bold text-purple-400 mb-4">Meta Quest (Shooter)</h2>
+                <p class="text-lg text-gray-300 mb-2">Your 6-Character Peer ID:</p>
                 <div class="bg-gray-800 p-4 rounded-lg inline-block shadow-lg">
-                    <p class="text-2xl md:text-4xl font-mono tracking-widest uppercase">{{ peerId || '...' }}</p>
+                    <p class="text-4xl font-mono tracking-widest uppercase">{{ peerId || '...' }}</p>
                 </div>
                 <p class="mt-4 text-gray-400">{{ statusMessage }}</p>
-             </div>
+            </div>
              
-             <div v-if="isConnected" class="w-full h-full relative bg-black shadow-2xl rounded-lg overflow-hidden">
-                <video ref="remoteVideo" id="remote-video" autoplay playsinline class="w-full h-full object-cover"></video>
-                
-                <!-- Bearing Arrow Overlay -->
-                <div v-if="gpsData.bearing !== null && typeof gpsData.bearing !== 'undefined'" 
-                     class="absolute top-1/2 left-1/2 transition-transform duration-500 ease-in-out" 
-                     :style="{ transform: `translate(-50%, -50%) rotate(${gpsData.bearing}deg)` }">
-                    <svg width="80" height="80" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg" style="filter: drop-shadow(0px 0px 10px rgba(0, 255, 255, 0.9));">
-                        <path d="M50 0L93.3013 75H6.69873L50 0Z" fill="#00FFFF"/>
-                    </svg>
+            <div v-if="isConnected" class="w-full h-full relative">
+                <canvas id="ar-canvas"></canvas>
+                <div class="crosshair"></div>
+                 <div class="absolute bottom-8 left-8 bg-black/60 p-4 rounded-lg text-white font-mono shadow-xl">
+                    <h3 class="text-lg font-bold text-cyan-300 mb-2">Mobile Player GPS</h3>
+                    <span>Lat: {{ gpsData.lat?.toFixed(5) || '...' }}</span><br/>
+                    <span>Lon: {{ gpsData.lon?.toFixed(5) || '...' }}</span>
                 </div>
-
-                <div class="absolute bottom-4 left-4 md:bottom-8 md:left-8 bg-black/60 backdrop-blur-sm p-4 rounded-lg text-white font-mono shadow-xl border border-white/20">
-                    <h3 class="text-lg font-bold text-cyan-300 mb-2 border-b border-cyan-300/30 pb-1">GPS Data</h3>
-                    <div class="grid grid-cols-2 gap-x-6 gap-y-1 text-base">
-                        <span>Lat:</span>      <span>{{ gpsData.lat?.toFixed(6) || '...' }}</span>
-                        <span>Lon:</span>      <span>{{ gpsData.lon?.toFixed(6) || '...' }}</span>
-                        <span>Altitude:</span> <span>{{ gpsData.alt ? gpsData.alt.toFixed(1) + ' m' : '...' }}</span>
-                        <span>Speed:</span>    <span>{{ gpsData.speed ? (gpsData.speed * 2.237).toFixed(1) + ' mph' : '...' }}</span>
-                        <span>Bearing:</span>  <span>{{ gpsData.bearing ? gpsData.bearing.toFixed(0) + '°' : '...' }}</span>
-                    </div>
+                 <div class="absolute top-8 right-8 bg-black/60 p-4 rounded-lg text-white font-mono shadow-xl text-center">
+                    <h3 class="text-lg font-bold text-yellow-400">TARGET DISTANCE</h3>
+                    <p class="text-3xl">{{ distanceToTarget.toFixed(0) }} m</p>
                 </div>
-
-                <div class="absolute top-4 right-4 flex flex-col items-end gap-3">
-                    <div class="flex items-center gap-2 bg-black/50 px-3 py-1.5 rounded-full">
-                        <div class="w-3 h-3 bg-green-500 rounded-full animate-pulse"></div>
-                        <span class="text-sm">Connected</span>
-                    </div>
-
-                    <!-- Recording Controls -->
-                    <div class="bg-black/50 p-2 rounded-lg flex flex-col items-end gap-2">
-                        <button @click="toggleRecording" class="px-4 py-2 rounded-md font-semibold text-white transition-colors" :class="isRecording ? 'bg-red-600 hover:bg-red-700' : 'bg-blue-600 hover:bg-blue-700'">
-                            <span v-if="isRecording" class="flex items-center gap-2">
-                                <span class="w-3 h-3 bg-white rounded-full animate-pulse"></span> Stop Recording
-                            </span>
-                            <span v-else>Record</span>
-                        </button>
-                        <a v-if="downloadUrl" :href="downloadUrl" :download="`recording-${new Date().toISOString()}.webm`" class="text-sm text-cyan-300 hover:text-cyan-200 bg-gray-800/80 px-3 py-1 rounded-md">
-                            Download Last Recording
-                        </a>
-                    </div>
+                <div v-if="gameState.gameStatus === 'won'" class="absolute inset-0 bg-black/80 flex items-center justify-center z-50">
+                     <h3 class="text-6xl font-bold text-green-400">TARGET REACHED!</h3>
                 </div>
-
-                <!-- Click to Play Overlay -->
-                <div v-if="videoPlaybackError" @click="attemptVideoPlay" class="absolute inset-0 bg-black/80 flex flex-col items-center justify-center cursor-pointer z-50">
-                    <svg class="w-24 h-24 text-white" fill="currentColor" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clip-rule="evenodd"></path></svg>
-                    <p class="text-2xl font-bold mt-4">Click to Play Video</p>
-                    <p class="text-gray-400">Browser prevented video from starting automatically</p>
-                </div>
-             </div>
-             <video ref="localVideo" autoplay playsinline muted class="hidden"></video>
+            </div>
         </div>
+        
+        <video ref="remoteVideo" id="remote-video" autoplay playsinline></video>
     </div>
 
     <script type="module">
-        const { createApp, ref, onMounted, watch } = Vue;
+        const { createApp, ref, onMounted, watch, computed } = Vue;
 
         createApp({
             setup() {
-                // ... (most state variables are the same)
                 const loading = ref(true);
                 const appMode = ref('selection');
-                const statusMessage = ref('Initializing...');
+                const statusMessage = ref('');
                 const errorMessage = ref('');
+                
                 const peer = ref(null);
                 const peerId = ref('');
                 const remotePeerId = ref('');
                 const conn = ref(null);
-                const currentCall = ref(null);
                 const isConnected = ref(false);
+                
                 const localStream = ref(null);
                 const remoteStream = ref(null);
+                const remoteVideo = ref(null);
+                
                 const gpsData = ref({});
                 let gpsWatchId = null;
-                const isRecording = ref(false);
-                const mediaRecorder = ref(null);
-                const recordedChunks = ref([]);
-                const downloadUrl = ref(null);
-                const localVideo = ref(null);
-                const remoteVideo = ref(null);
 
-                // New state for handling video playback issues
-                const videoPlaybackError = ref(false);
+                // --- Game State ---
+                const gameState = ref({
+                    targetGps: null, // {lat, lon}
+                    cubes: [], // [{id, lat, lon}]
+                    gameStatus: 'playing', // 'playing', 'won'
+                });
+                
+                // --- Three.js state (Receiver only) ---
+                let scene, camera, renderer, videoTexture, cubeMeshes = [];
 
-                // New method to manually attempt playback
-                const attemptVideoPlay = () => {
-                    if (remoteVideo.value) {
-                        remoteVideo.value.play().then(() => {
-                            videoPlaybackError.value = false; // Success, hide the overlay
-                        }).catch(err => {
-                            console.error("[RECEIVER] Manual play attempt failed:", err);
-                            statusMessage.value = "Manual play failed. Please check site permissions.";
-                        });
+                // --- Computed Properties for UI ---
+                const distanceToTarget = computed(() => {
+                    if (gameState.value.targetGps && gpsData.value.lat) {
+                        return calculateDistance(gpsData.value.lat, gpsData.value.lon, gameState.value.targetGps.lat, gameState.value.targetGps.lon);
                     }
-                };
-
-                watch(localStream, (stream) => { if (localVideo.value && stream) localVideo.value.srcObject = stream; });
-                watch(remoteStream, (stream) => { 
-                    if (remoteVideo.value && stream) {
-                        console.log('[RECEIVER] Watcher triggered. Attaching stream to remote video element.');
-                        videoPlaybackError.value = false; // Reset error on new stream
-                        remoteVideo.value.srcObject = stream;
-                        remoteVideo.value.play().catch(error => {
-                            console.error('[RECEIVER] Video play failed:', error);
-                            statusMessage.value = "Video stream received, but autoplay was blocked.";
-                            videoPlaybackError.value = true; // Show the click-to-play overlay
-                        });
-                    }
+                    return 0;
                 });
 
-                const generateShortId = (length = 6) => {
-                    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-                    let result = '';
-                    for (let i = 0; i < length; i++) result += chars.charAt(Math.floor(Math.random() * chars.length));
-                    return result;
-                };
+                const getTargetPositionOnRadar = computed(() => getRadarPosition(gameState.value.targetGps));
+                const getCubePositionOnRadar = (cube) => getRadarPosition({ lat: cube.lat, lon: cube.lon });
+                
+                function getRadarPosition(targetCoords) {
+                    if (!targetCoords || !gpsData.value.lat) return { top: '50%', left: '50%'};
+                    const distance = calculateDistance(gpsData.value.lat, gpsData.value.lon, targetCoords.lat, targetCoords.lon);
+                    const bearing = calculateBearing(gpsData.value.lat, gpsData.value.lon, targetCoords.lat, targetCoords.lon);
+                    
+                    // Normalize distance to radar radius (128px)
+                    const radarRadius = 112; // 128 - half of icon size
+                    const maxDistance = 2000; // max distance shown on radar
+                    const displayDistance = Math.min(distance, maxDistance) / maxDistance * radarRadius;
 
-                const initializePeer = () => {
-                    const generatedId = generateShortId(6);
-                    peer.value = new Peer(generatedId);
+                    const angleRad = (bearing - 90) * (Math.PI / 180); // Adjust for CSS rotation
+                    const x = displayDistance * Math.cos(angleRad);
+                    const y = displayDistance * Math.sin(angleRad);
 
-                    peer.value.on('open', (id) => {
-                        console.log(`[PEER] Peer object opened with ID: ${id}`);
-                        peerId.value = id;
-                        statusMessage.value = appMode.value === 'receiver' ? "Ready. Share ID with mobile device." : "Ready to call.";
-                    });
+                    return {
+                        top: `calc(50% + ${y}px)`,
+                        left: `calc(50% + ${x}px)`,
+                        transform: 'translate(-50%, -50%)',
+                    };
+                }
 
-                    peer.value.on('error', (err) => {
-                        console.error('[PEER] PeerJS error:', err);
-                        let msg = `Error: ${err.message}. Try refreshing.`;
-                        if (err.type === 'unavailable-id') msg = `ID "${generatedId}" is taken. Refresh for a new one.`;
-                        errorMessage.value = msg;
-                        statusMessage.value = errorMessage.value;
-                        peerId.value = 'ERROR';
-                    });
+                // --- Utility Functions ---
+                function calculateDistance(lat1, lon1, lat2, lon2) {
+                    const R = 6371e3; // metres
+                    const φ1 = lat1 * Math.PI/180;
+                    const φ2 = lat2 * Math.PI/180;
+                    const Δφ = (lat2-lat1) * Math.PI/180;
+                    const Δλ = (lon2-lon1) * Math.PI/180;
 
+                    const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) + Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ/2) * Math.sin(Δλ/2);
+                    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+                    return R * c;
+                }
+
+                function calculateBearing(lat1, lon1, lat2, lon2) {
+                    const φ1 = lat1 * Math.PI/180, φ2 = lat2 * Math.PI/180;
+                    const λ1 = lon1 * Math.PI/180, λ2 = lon2 * Math.PI/180;
+                    const y = Math.sin(λ2-λ1) * Math.cos(φ2);
+                    const x = Math.cos(φ1)*Math.sin(φ2) - Math.sin(φ1)*Math.cos(φ2)*Math.cos(λ2-λ1);
+                    const θ = Math.atan2(y, x);
+                    return (θ*180/Math.PI + 360) % 360;
+                }
+
+                function generateRandomPoint(lat, lon, distanceMeters) {
+                    const R = 6371e3;
+                    const d = distanceMeters;
+                    const brng = Math.random() * 2 * Math.PI; // Random bearing
+                    const lat1 = lat * Math.PI/180;
+                    const lon1 = lon * Math.PI/180;
+                    
+                    const lat2 = Math.asin(Math.sin(lat1)*Math.cos(d/R) + Math.cos(lat1)*Math.sin(d/R)*Math.cos(brng));
+                    const lon2 = lon1 + Math.atan2(Math.sin(brng)*Math.sin(d/R)*Math.cos(lat1), Math.cos(d/R)-Math.sin(lat1)*Math.sin(lat2));
+                    
+                    return { lat: lat2 * 180/Math.PI, lon: lon2 * 180/Math.PI };
+                }
+
+                // --- PeerJS and Connection Logic ---
+                const initializePeer = (id) => {
+                    peer.value = new Peer(id);
+                    peer.value.on('open', (id) => peerId.value = id);
+                    peer.value.on('error', (err) => { statusMessage.value = `Error: ${err.message}`; errorMessage.value = true; });
                     if (appMode.value === 'receiver') setupReceiverListeners();
                 };
-                
+
                 const setupReceiverListeners = () => {
                     statusMessage.value = 'Waiting for connection...';
-                    
                     peer.value.on('connection', (dataConnection) => {
-                        console.log('[RECEIVER] Incoming data connection request.');
                         conn.value = dataConnection;
                         conn.value.on('open', () => {
-                            console.log('[RECEIVER] Data connection opened.');
                             isConnected.value = true;
                             statusMessage.value = "Connected!";
+                            // Game starts when GPS data first arrives
                         });
-                        conn.value.on('data', (data) => gpsData.value = data);
-                        conn.value.on('close', handleDisconnect);
+                        conn.value.on('data', handleData);
                     });
 
                     peer.value.on('call', async (call) => {
-                        console.log('[RECEIVER] Incoming media call request.');
-                        try {
-                            const questMicStream = await navigator.mediaDevices.getUserMedia({ video: false, audio: true });
-                            localStream.value = questMicStream;
-                            console.log('[RECEIVER] Got microphone stream. Answering call.');
-                            call.answer(questMicStream);
-                            currentCall.value = call;
-                            call.on('stream', (stream) => {
-                                console.log('[RECEIVER] "stream" event fired on call object.');
-                                // Enhanced Diagnostics
-                                console.log('[RECEIVER] Stream object received:', stream);
-                                console.log('[RECEIVER] Number of tracks in stream:', stream.getTracks().length);
-                                console.log('[RECEIVER] Number of VIDEO tracks in stream:', stream.getVideoTracks().length);
-                                remoteStream.value = stream;
-                            });
-                            call.on('close', handleDisconnect);
-                        } catch(err) {
-                            console.error("[RECEIVER] Failed to get local stream or answer call", err);
-                            statusMessage.value = "Error: Could not access microphone.";
-                        }
+                        const questMicStream = await navigator.mediaDevices.getUserMedia({ video: false, audio: true });
+                        call.answer(questMicStream);
+                        call.on('stream', (stream) => {
+                            remoteStream.value = stream;
+                            remoteVideo.value.srcObject = stream;
+                            remoteVideo.value.play().then(initARScene);
+                        });
                     });
                 };
-
-                const startAsCaller = () => { appMode.value = 'caller'; initializePeer(); };
-                const startAsReceiver = () => { appMode.value = 'receiver'; initializePeer(); };
                 
                 const makeCall = async () => {
-                    statusMessage.value = `Connecting to ${remotePeerId.value}...`;
                     try {
-                        console.log('[CALLER] Requesting camera and microphone...');
-                        let mobileStream;
-                        const environmentConstraints = { 
-                            video: { facingMode: 'environment' }, 
-                            audio: true 
-                        };
-
-                        try {
-                            console.log('[CALLER] Attempting to get environment-facing camera...');
-                            mobileStream = await navigator.mediaDevices.getUserMedia(environmentConstraints);
-                        } catch (err) {
-                            console.warn('[CALLER] Environment-facing camera failed, falling back to default camera.', err);
-                            statusMessage.value = "Rear camera not found, using front camera.";
-                            // Fallback to any camera if the environment one fails
-                            mobileStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-                        }
-                        
-                        console.log('[CALLER] Media stream acquired successfully.');
+                        const mobileStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: true });
                         localStream.value = mobileStream;
-                        
-                        console.log('[CALLER] Establishing data connection...');
-                        const dataConnection = peer.value.connect(remotePeerId.value);
-                        conn.value = dataConnection;
-                        dataConnection.on('open', () => {
-                            console.log('[CALLER] Data connection opened.');
-                            isConnected.value = true;
-                            statusMessage.value = "Connected! Starting GPS...";
-                            startGpsUpdates();
-                        });
-                        dataConnection.on('error', (err) => console.error('[CALLER] Data connection error:', err));
-                        dataConnection.on('close', handleDisconnect);
-
-                        console.log('[CALLER] Placing media call...');
-                        const call = peer.value.call(remotePeerId.value, mobileStream);
-                        currentCall.value = call;
-                        call.on('stream', (stream) => {
-                            console.log('[CALLER] Received remote audio stream from Quest.');
-                            remoteStream.value = stream
-                        });
-                        call.on('close', handleDisconnect);
-                    } catch (err) {
-                        console.error("[CALLER] Failed to get media or connect", err);
-                        statusMessage.value = "Error starting call. Check permissions & ID.";
-                        errorMessage.value = statusMessage.value;
-                    }
+                        conn.value = peer.value.connect(remotePeerId.value);
+                        conn.value.on('open', () => { isConnected.value = true; startGpsUpdates(); });
+                        conn.value.on('data', handleData);
+                        peer.value.call(remotePeerId.value, mobileStream);
+                    } catch (err) { statusMessage.value = "Error: " + err.message; errorMessage.value = true; }
                 };
-
+                
                 const startGpsUpdates = () => {
-                    if (!('geolocation' in navigator)) { statusMessage.value = "GPS not available."; return; }
                     gpsWatchId = navigator.geolocation.watchPosition(
                         (pos) => {
-                            const { latitude, longitude, altitude, speed, heading } = pos.coords;
-                            const data = { lat: latitude, lon: longitude, alt: altitude, speed: speed, bearing: heading };
-                            gpsData.value = data;
-                            if (conn.value && conn.value.open) conn.value.send(data);
+                            const { latitude, longitude } = pos.coords;
+                            gpsData.value = { lat: latitude, lon: longitude };
+                            sendData({ type: 'gpsUpdate', payload: gpsData.value });
                         },
-                        (err) => statusMessage.value = `GPS Error: ${err.message}`,
-                        { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+                        () => {}, { enableHighAccuracy: true }
                     );
                 };
-
-                // --- Recording Logic ---
-                const toggleRecording = () => { if (isRecording.value) { stopRecording(); } else { startRecording(); } };
-                const startRecording = () => {
-                    if (!remoteStream.value) { alert("Cannot record, no remote stream."); return; }
-                    recordedChunks.value = [];
-                    downloadUrl.value = null; 
-                    const options = { mimeType: 'video/webm; codecs=vp9' };
-                    if (!MediaRecorder.isTypeSupported(options.mimeType)) { options.mimeType = 'video/webm; codecs=vp8'; }
-                    if (!MediaRecorder.isTypeSupported(options.mimeType)) { options.mimeType = 'video/webm'; }
-                    try { mediaRecorder.value = new MediaRecorder(remoteStream.value, options); } 
-                    catch (e) { console.error("MediaRecorder error:", e); alert(`MediaRecorder error: ${e.toString()}`); return; }
-                    mediaRecorder.value.ondataavailable = (event) => { if (event.data.size > 0) recordedChunks.value.push(event.data); };
-                    mediaRecorder.value.onstop = () => {
-                        const blob = new Blob(recordedChunks.value, { type: 'video/webm' });
-                        downloadUrl.value = URL.createObjectURL(blob);
-                    };
-                    mediaRecorder.value.start();
-                    isRecording.value = true;
-                };
-                const stopRecording = () => {
-                    if (mediaRecorder.value) { mediaRecorder.value.stop(); isRecording.value = false; }
-                };
-
-                const handleDisconnect = () => {
-                    console.log("[SYSTEM] A connection was closed. Cleaning up.");
-                    isConnected.value = false;
-                    statusMessage.value = "Disconnected. Refresh to start over.";
-                    stopRecording(); 
-                    if (gpsWatchId) navigator.geolocation.clearWatch(gpsWatchId);
-                    if (localStream.value) localStream.value.getTracks().forEach(t => t.stop());
-                    if (remoteStream.value) remoteStream.value.getTracks().forEach(t => t.stop());
-                    localStream.value = remoteStream.value = conn.value = currentCall.value = null;
-                };
-
-                onMounted(() => {
-                    if (window.location.protocol !== 'https:') {
-                       statusMessage.value = "Error: This app must be served over HTTPS.";
-                       alert(statusMessage.value);
-                       return;
+                
+                const sendData = (data) => { if (conn.value && conn.value.open) conn.value.send(data); };
+                
+                const handleData = (data) => {
+                    // Receiver handles GPS updates from caller
+                    if (appMode.value === 'receiver' && data.type === 'gpsUpdate') {
+                        gpsData.value = data.payload;
+                        if (!gameState.value.targetGps) {
+                           // First GPS update, initialize the game
+                           initializeGame(data.payload.lat, data.payload.lon);
+                        } else {
+                           updateARScene(); // Update cube positions
+                           // Check for win condition
+                           if(distanceToTarget.value < 1000 && gameState.value.gameStatus !== 'won') {
+                               gameState.value.gameStatus = 'won';
+                               sendData({ type: 'gameState', payload: gameState.value });
+                           }
+                        }
                     }
-                    loading.value = false;
-                });
+                    // Caller handles game state from receiver
+                    if (appMode.value === 'caller' && data.type === 'gameState') {
+                        gameState.value = data.payload;
+                    }
+                };
+
+                // --- Game Logic (Receiver/Quest side) ---
+                const initializeGame = (startLat, startLon) => {
+                    // Target is 1.5km away
+                    gameState.value.targetGps = generateRandomPoint(startLat, startLon, 1500);
+                    // 5 cubes within 500m
+                    gameState.value.cubes = [...Array(5)].map((_, i) => ({
+                        id: `cube_${i}`,
+                        ...generateRandomPoint(startLat, startLon, Math.random() * 500)
+                    }));
+                    gameState.value.gameStatus = 'playing';
+                    sendData({ type: 'gameState', payload: gameState.value });
+                    spawnCubesAR();
+                };
+
+                // --- AR Scene (Three.js on Receiver/Quest) ---
+                function initARScene() {
+                    const canvas = document.getElementById('ar-canvas');
+                    renderer = new THREE.WebGLRenderer({ canvas, alpha: true });
+                    renderer.setSize(window.innerWidth, window.innerHeight);
+                    scene = new THREE.Scene();
+                    camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+                    camera.position.z = 0;
+                    
+                    videoTexture = new THREE.VideoTexture(remoteVideo.value);
+                    scene.background = videoTexture;
+                    
+                    const light = new THREE.HemisphereLight(0xffffff, 0xbbbbff, 1);
+                    scene.add(light);
+                    
+                    canvas.addEventListener('click', shoot);
+                    animateAR();
+                }
+
+                function spawnCubesAR() {
+                    const geometry = new THREE.BoxGeometry();
+                    const material = new THREE.MeshStandardMaterial({ color: 0xff00ff, roughness: 0.3 });
+                    gameState.value.cubes.forEach(cubeData => {
+                        const cube = new THREE.Mesh(geometry, material);
+                        cube.userData.id = cubeData.id;
+                        cubeMeshes.push(cube);
+                        scene.add(cube);
+                    });
+                    updateARScene();
+                }
+
+                function updateARScene() {
+                    if (!gpsData.value.lat) return;
+                    cubeMeshes.forEach(mesh => {
+                        const cubeData = gameState.value.cubes.find(c => c.id === mesh.userData.id);
+                        if(cubeData) {
+                            const distance = calculateDistance(gpsData.value.lat, gpsData.value.lon, cubeData.lat, cubeData.lon);
+                            const bearing = calculateBearing(gpsData.value.lat, gpsData.value.lon, cubeData.lat, cubeData.lon);
+                            const angleRad = (bearing * Math.PI / 180);
+                            
+                            // Place cubes in a circle around the player for gameplay
+                            const displayDistance = 10;
+                            mesh.position.x = displayDistance * Math.sin(angleRad);
+                            mesh.position.y = (Math.random() - 0.5) * 5; // Random height
+                            mesh.position.z = -displayDistance * Math.cos(angleRad);
+                        }
+                    });
+                }
+                
+                function shoot() {
+                    const raycaster = new THREE.Raycaster();
+                    const pointer = new THREE.Vector2(0, 0); // Center of screen
+                    raycaster.setFromCamera(pointer, camera);
+                    const intersects = raycaster.intersectObjects(cubeMeshes);
+
+                    if (intersects.length > 0) {
+                        const hitCube = intersects[0].object;
+                        scene.remove(hitCube);
+                        
+                        // Remove from state
+                        const cubeId = hitCube.userData.id;
+                        cubeMeshes = cubeMeshes.filter(m => m.userData.id !== cubeId);
+                        gameState.value.cubes = gameState.value.cubes.filter(c => c.id !== cubeId);
+
+                        // Notify caller
+                        sendData({ type: 'gameState', payload: gameState.value });
+                    }
+                }
+
+                function animateAR() {
+                    requestAnimationFrame(animateAR);
+                    if (videoTexture) videoTexture.needsUpdate = true;
+                    cubeMeshes.forEach(mesh => {
+                        mesh.rotation.x += 0.01;
+                        mesh.rotation.y += 0.01;
+                    });
+                    renderer.render(scene, camera);
+                }
+
+                const startAs = (mode) => {
+                    appMode.value = mode;
+                    const id = [...Array(6)].map(() => "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"[Math.floor(Math.random() * 36)]).join('');
+                    initializePeer(id);
+                };
+
+                onMounted(() => { loading.value = false; });
 
                 return {
                     loading, appMode, peerId, remotePeerId, isConnected, statusMessage, errorMessage,
-                    gpsData, localStream, remoteStream, localVideo, remoteVideo,
-                    startAsCaller, startAsReceiver, makeCall,
-                    isRecording, downloadUrl, toggleRecording,
-                    // Expose new state and method to the template
-                    videoPlaybackError,
-                    attemptVideoPlay,
+                    startAsCaller: () => startAs('caller'),
+                    startAsReceiver: () => startAs('receiver'),
+                    makeCall,
+                    gpsData,
+                    gameState,
+                    distanceToTarget,
+                    getTargetPositionOnRadar,
+                    getCubePositionOnRadar,
+                    remoteVideo,
                 };
             }
         }).mount('#app');
