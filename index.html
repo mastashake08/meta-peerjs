@@ -152,40 +152,41 @@
 
         createApp({
             setup() {
-                // App State
+                // ... (most of the state variables are the same)
                 const loading = ref(true);
                 const appMode = ref('selection');
                 const statusMessage = ref('Initializing...');
                 const errorMessage = ref('');
-                
-                // PeerJS State
                 const peer = ref(null);
                 const peerId = ref('');
                 const remotePeerId = ref('');
                 const conn = ref(null);
                 const currentCall = ref(null);
                 const isConnected = ref(false);
-                
-                // Media Streams
                 const localStream = ref(null);
                 const remoteStream = ref(null);
-                
-                // GPS Data
                 const gpsData = ref({});
                 let gpsWatchId = null;
-
-                // Recording State
                 const isRecording = ref(false);
                 const mediaRecorder = ref(null);
                 const recordedChunks = ref([]);
                 const downloadUrl = ref(null);
-
-                // Template refs
                 const localVideo = ref(null);
                 const remoteVideo = ref(null);
 
+
                 watch(localStream, (stream) => { if (localVideo.value && stream) localVideo.value.srcObject = stream; });
-                watch(remoteStream, (stream) => { if (remoteVideo.value && stream) remoteVideo.value.srcObject = stream; });
+                watch(remoteStream, (stream) => { 
+                    if (remoteVideo.value && stream) {
+                        console.log('[RECEIVER] Watcher triggered. Attaching stream to remote video element.');
+                        remoteVideo.value.srcObject = stream;
+                        // ADDED: Attempt to play the video programmatically, and catch potential errors
+                        remoteVideo.value.play().catch(error => {
+                            console.error('[RECEIVER] Video play failed:', error);
+                            statusMessage.value = "Video stream received, but autoplay was blocked. Click the screen to start video.";
+                        });
+                    }
+                });
 
                 const generateShortId = (length = 6) => {
                     const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
@@ -199,13 +200,13 @@
                     peer.value = new Peer(generatedId);
 
                     peer.value.on('open', (id) => {
-                        console.log('My peer ID is: ' + id);
+                        console.log(`[PEER] Peer object opened with ID: ${id}`);
                         peerId.value = id;
                         statusMessage.value = appMode.value === 'receiver' ? "Ready. Share ID with mobile device." : "Ready to call.";
                     });
 
                     peer.value.on('error', (err) => {
-                        console.error('PeerJS error:', err);
+                        console.error('[PEER] PeerJS error:', err);
                         let msg = `Error: ${err.message}. Try refreshing.`;
                         if (err.type === 'unavailable-id') msg = `ID "${generatedId}" is taken. Refresh for a new one.`;
                         errorMessage.value = msg;
@@ -220,8 +221,10 @@
                     statusMessage.value = 'Waiting for connection...';
                     
                     peer.value.on('connection', (dataConnection) => {
+                        console.log('[RECEIVER] Incoming data connection request.');
                         conn.value = dataConnection;
                         conn.value.on('open', () => {
+                            console.log('[RECEIVER] Data connection opened.');
                             isConnected.value = true;
                             statusMessage.value = "Connected!";
                         });
@@ -230,15 +233,20 @@
                     });
 
                     peer.value.on('call', async (call) => {
+                        console.log('[RECEIVER] Incoming media call request.');
                         try {
                             const questMicStream = await navigator.mediaDevices.getUserMedia({ video: false, audio: true });
                             localStream.value = questMicStream;
+                            console.log('[RECEIVER] Got microphone stream. Answering call.');
                             call.answer(questMicStream);
                             currentCall.value = call;
-                            call.on('stream', (stream) => remoteStream.value = stream);
+                            call.on('stream', (stream) => {
+                                console.log('[RECEIVER] "stream" event fired on call object.');
+                                remoteStream.value = stream
+                            });
                             call.on('close', handleDisconnect);
                         } catch(err) {
-                            console.error("Failed to get local stream", err);
+                            console.error("[RECEIVER] Failed to get local stream or answer call", err);
                             statusMessage.value = "Error: Could not access microphone.";
                         }
                     });
@@ -250,26 +258,35 @@
                 const makeCall = async () => {
                     statusMessage.value = `Connecting to ${remotePeerId.value}...`;
                     try {
+                        console.log('[CALLER] Requesting camera and microphone...');
                         const mobileStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+                        console.log('[CALLER] Media stream acquired successfully.');
                         localStream.value = mobileStream;
                         
+                        console.log('[CALLER] Establishing data connection...');
                         const dataConnection = peer.value.connect(remotePeerId.value);
                         conn.value = dataConnection;
                         dataConnection.on('open', () => {
+                            console.log('[CALLER] Data connection opened.');
                             isConnected.value = true;
                             statusMessage.value = "Connected! Starting GPS...";
                             startGpsUpdates();
                         });
-                        dataConnection.on('error', (err) => console.error('Data connection error:', err));
+                        dataConnection.on('error', (err) => console.error('[CALLER] Data connection error:', err));
                         dataConnection.on('close', handleDisconnect);
 
+                        console.log('[CALLER] Placing media call...');
                         const call = peer.value.call(remotePeerId.value, mobileStream);
                         currentCall.value = call;
-                        call.on('stream', (stream) => remoteStream.value = stream);
+                        call.on('stream', (stream) => {
+                            console.log('[CALLER] Received remote audio stream from Quest.');
+                            remoteStream.value = stream
+                        });
                         call.on('close', handleDisconnect);
                     } catch (err) {
-                        console.error("Failed to get media or connect", err);
+                        console.error("[CALLER] Failed to get media or connect", err);
                         statusMessage.value = "Error starting call. Check permissions & ID.";
+                        errorMessage.value = statusMessage.value;
                     }
                 };
 
@@ -288,70 +305,33 @@
                 };
 
                 // --- Recording Logic ---
-                const toggleRecording = () => {
-                    if (isRecording.value) {
-                        stopRecording();
-                    } else {
-                        startRecording();
-                    }
-                };
-
+                const toggleRecording = () => { if (isRecording.value) { stopRecording(); } else { startRecording(); } };
                 const startRecording = () => {
-                    if (!remoteStream.value) {
-                        alert("Cannot start recording, no remote stream available.");
-                        return;
-                    }
+                    if (!remoteStream.value) { alert("Cannot record, no remote stream."); return; }
                     recordedChunks.value = [];
-                    downloadUrl.value = null; // Clear previous download link
-                    
-                    // Check for supported mime types
+                    downloadUrl.value = null; 
                     const options = { mimeType: 'video/webm; codecs=vp9' };
-                    if (!MediaRecorder.isTypeSupported(options.mimeType)) {
-                        console.log(`${options.mimeType} is not Supported, trying vp8`);
-                        options.mimeType = 'video/webm; codecs=vp8';
-                         if (!MediaRecorder.isTypeSupported(options.mimeType)) {
-                            console.log(`${options.mimeType} is not Supported, trying default`);
-                            options.mimeType = 'video/webm';
-                         }
-                    }
-
-                    try {
-                        mediaRecorder.value = new MediaRecorder(remoteStream.value, options);
-                    } catch (e) {
-                        console.error("Exception while creating MediaRecorder:", e);
-                        alert(`Error creating MediaRecorder: ${e.toString()}`);
-                        return;
-                    }
-                    
-                    mediaRecorder.value.ondataavailable = (event) => {
-                        if (event.data.size > 0) {
-                            recordedChunks.value.push(event.data);
-                        }
-                    };
-
+                    if (!MediaRecorder.isTypeSupported(options.mimeType)) { options.mimeType = 'video/webm; codecs=vp8'; }
+                    if (!MediaRecorder.isTypeSupported(options.mimeType)) { options.mimeType = 'video/webm'; }
+                    try { mediaRecorder.value = new MediaRecorder(remoteStream.value, options); } 
+                    catch (e) { console.error("MediaRecorder error:", e); alert(`MediaRecorder error: ${e.toString()}`); return; }
+                    mediaRecorder.value.ondataavailable = (event) => { if (event.data.size > 0) recordedChunks.value.push(event.data); };
                     mediaRecorder.value.onstop = () => {
                         const blob = new Blob(recordedChunks.value, { type: 'video/webm' });
                         downloadUrl.value = URL.createObjectURL(blob);
                     };
-
                     mediaRecorder.value.start();
                     isRecording.value = true;
-                    console.log("Recording started.");
                 };
-                
                 const stopRecording = () => {
-                    if (mediaRecorder.value) {
-                        mediaRecorder.value.stop();
-                        isRecording.value = false;
-                        console.log("Recording stopped.");
-                    }
+                    if (mediaRecorder.value) { mediaRecorder.value.stop(); isRecording.value = false; }
                 };
 
                 const handleDisconnect = () => {
-                    console.log("A connection was closed.");
+                    console.log("[SYSTEM] A connection was closed. Cleaning up.");
                     isConnected.value = false;
                     statusMessage.value = "Disconnected. Refresh to start over.";
-                    stopRecording(); // Stop recording on disconnect
+                    stopRecording(); 
                     if (gpsWatchId) navigator.geolocation.clearWatch(gpsWatchId);
                     if (localStream.value) localStream.value.getTracks().forEach(t => t.stop());
                     if (remoteStream.value) remoteStream.value.getTracks().forEach(t => t.stop());
@@ -378,5 +358,4 @@
     </script>
 </body>
 </html>
-
 
