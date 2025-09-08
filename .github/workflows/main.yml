@@ -1,0 +1,35 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches:
+      - main # Or your default branch
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Replace API keys
+        run: |
+          sed -i 's|__FIREBASE_CONFIG__|${{ secrets.FIREBASE_CONFIG }}|g' index.html
+          sed -i 's|__STRIPE_PUBLISHABLE_KEY__|${{ secrets.STRIPE_PUBLISHABLE_KEY }}|g' index.html
+        
+      - name: Setup Pages
+        uses: actions/configure-pages@v3
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v2
+        with:
+          path: '.' # Upload root directory where index.html is located
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v2
