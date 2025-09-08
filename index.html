@@ -96,31 +96,34 @@
                 <p class="mt-4 text-gray-400">{{ statusMessage }}</p>
             </div>
              
-            <div v-if="isConnected && !arReady" class="w-full h-full flex items-center justify-center text-center">
-                <div>
-                    <button @click="startARSession" :disabled="!videoReady" class="bg-green-600 hover:bg-green-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-bold py-4 px-8 rounded-lg text-2xl shadow-lg">Start AR</button>
-                    <p v-if="!videoReady" class="text-gray-400 mt-4">Waiting for video stream from mobile device...</p>
-                </div>
-            </div>
+            <div v-if="isConnected" class="w-full h-full relative">
+                <canvas id="ar-canvas" :class="arReady ? '' : 'hidden'"></canvas>
 
-            <div v-if="isConnected && arReady" class="w-full h-full relative">
-                <canvas id="ar-canvas"></canvas>
-                <div class="crosshair"></div>
-                <div class="absolute bottom-8 left-8 bg-black/60 p-4 rounded-lg text-white font-mono shadow-xl text-sm">
-                    <h3 class="text-lg font-bold text-cyan-300 mb-2">Mobile Player GPS</h3>
-                    <span>Lat: {{ gpsData.lat?.toFixed(5) || '...' }}</span><br/>
-                    <span>Lon: {{ gpsData.lon?.toFixed(5) || '...' }}</span>
+                <div v-if="!arReady" class="w-full h-full flex items-center justify-center text-center">
+                    <div>
+                        <button @click="startARSession" :disabled="!videoReady" class="bg-green-600 hover:bg-green-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-bold py-4 px-8 rounded-lg text-2xl shadow-lg">Start AR</button>
+                        <p v-if="!videoReady" class="text-gray-400 mt-4">Waiting for video stream from mobile device...</p>
+                    </div>
                 </div>
-                 <div class="absolute top-8 right-8 bg-black/60 p-4 rounded-lg text-white font-mono shadow-xl text-center">
-                    <h3 class="text-lg font-bold text-yellow-400">TARGET DISTANCE</h3>
-                    <p class="text-3xl">{{ distanceToTarget.toFixed(0) }} m</p>
-                </div>
-                <div class="absolute top-8 left-8 bg-black/60 p-4 rounded-lg text-white font-mono shadow-xl text-center">
-                    <h3 class="text-lg font-bold text-red-400">CUBES REMAINING</h3>
-                    <p class="text-3xl">{{ gameState.cubes.length }}</p>
-                </div>
-                <div v-if="gameState.gameStatus === 'won'" class="absolute inset-0 bg-black/80 flex items-center justify-center z-50">
-                     <h3 class="text-6xl font-bold text-green-400">TARGET REACHED!</h3>
+
+                <div v-if="arReady">
+                    <div class="crosshair"></div>
+                    <div class="absolute bottom-8 left-8 bg-black/60 p-4 rounded-lg text-white font-mono shadow-xl text-sm">
+                        <h3 class="text-lg font-bold text-cyan-300 mb-2">Mobile Player GPS</h3>
+                        <span>Lat: {{ gpsData.lat?.toFixed(5) || '...' }}</span><br/>
+                        <span>Lon: {{ gpsData.lon?.toFixed(5) || '...' }}</span>
+                    </div>
+                     <div class="absolute top-8 right-8 bg-black/60 p-4 rounded-lg text-white font-mono shadow-xl text-center">
+                        <h3 class="text-lg font-bold text-yellow-400">TARGET DISTANCE</h3>
+                        <p class="text-3xl">{{ distanceToTarget.toFixed(0) }} m</p>
+                    </div>
+                    <div class="absolute top-8 left-8 bg-black/60 p-4 rounded-lg text-white font-mono shadow-xl text-center">
+                        <h3 class="text-lg font-bold text-red-400">CUBES REMAINING</h3>
+                        <p class="text-3xl">{{ gameState.cubes.length }}</p>
+                    </div>
+                    <div v-if="gameState.gameStatus === 'won'" class="absolute inset-0 bg-black/80 flex items-center justify-center z-50">
+                         <h3 class="text-6xl font-bold text-green-400">TARGET REACHED!</h3>
+                    </div>
                 </div>
             </div>
         </div>
@@ -298,17 +301,20 @@
 
                 async function startARSession() {
                     const canvas = document.getElementById('ar-canvas');
-                    console.log(canvas);
-                    try {
+                    // This check is crucial now
+                    if (!canvas || !remoteVideo.value || remoteVideo.value.readyState < 3) {
+                        statusMessage.value = "Video not ready. Please wait.";
+                        console.error("startARSession called before resources were ready. Canvas:", canvas, "Video:", remoteVideo.value);
+                        return;
+                    }
+                    
                     renderer = new THREE.WebGLRenderer({ canvas, alpha: true });
                     renderer.setSize(window.innerWidth, window.innerHeight);
                     renderer.xr.enabled = true;
                     
                     scene = new THREE.Scene();
                     camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-                    } catch (e) {
-                        console.log(e);
-                    }
+                    
                     videoTexture = new THREE.VideoTexture(remoteVideo.value);
                     scene.background = videoTexture;
                     
@@ -418,15 +424,18 @@
                     const id = [...Array(6)].map(() => "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"[Math.floor(Math.random() * 36)]).join('');
                     initializePeer(id);
                 };
-
-                onMounted(() => {
-                    loading.value = false;
-                    if (remoteVideo.value) {
-                         remoteVideo.value.addEventListener('playing', () => {
+                
+                watch(remoteVideo, (newVal) => {
+                    if (newVal) {
+                        newVal.addEventListener('playing', () => {
                             console.log("Remote video has started playing.");
                             videoReady.value = true;
                         });
                     }
+                });
+
+                onMounted(() => {
+                    loading.value = false;
                 });
 
                 return {
