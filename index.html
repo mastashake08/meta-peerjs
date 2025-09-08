@@ -298,6 +298,7 @@
 
                 async function startARSession() {
                     const canvas = document.getElementById('ar-canvas');
+                    console.log(canvas);
                     try {
                     renderer = new THREE.WebGLRenderer({ canvas, alpha: true });
                     renderer.setSize(window.innerWidth, window.innerHeight);
