@@ -18,15 +18,16 @@
             color: #f0f0f0;
             font-family: 'Inter', sans-serif;
         }
-        /* Base video styles */
+        /* Custom styles for video elements to ensure they are handled correctly */
         video {
             width: 100%;
             height: 100%;
             object-fit: cover;
+            transform: scaleX(-1); /* Mirror the local video for a more natural feel */
         }
-        /* Specific class to mirror the caller's local preview */
-        .local-video-mirrored {
-            transform: scaleX(-1);
+        /* Ensure remote video is not mirrored */
+        #remote-video {
+            transform: scaleX(1);
         }
         /* Force uppercase on input for consistency */
         .uppercase-input::placeholder {
@@ -91,8 +92,7 @@
             </div>
 
             <div class="mt-4 rounded-lg overflow-hidden shadow-2xl relative w-full aspect-video" v-show="localStream">
-                 <!-- The local-video-mirrored class is applied here -->
-                 <video ref="localVideo" autoplay playsinline muted class="bg-gray-900 local-video-mirrored"></video>
+                 <video ref="localVideo" autoplay playsinline muted class="bg-gray-900"></video>
                  <p class="absolute bottom-2 left-2 bg-black/50 px-2 py-1 rounded text-xs">Your Camera</p>
             </div>
             <video ref="remoteVideo" autoplay playsinline class="hidden"></video>
@@ -110,9 +110,17 @@
              </div>
              
              <div v-if="isConnected" class="w-full h-full relative bg-black shadow-2xl rounded-lg overflow-hidden">
-                <!-- This video element is not mirrored -->
                 <video ref="remoteVideo" id="remote-video" autoplay playsinline class="w-full h-full object-cover"></video>
                 
+                <!-- Bearing Arrow Overlay -->
+                <div v-if="gpsData.bearing !== null && typeof gpsData.bearing !== 'undefined'" 
+                     class="absolute top-1/2 left-1/2 transition-transform duration-500 ease-in-out" 
+                     :style="{ transform: `translate(-50%, -50%) rotate(${gpsData.bearing}deg)` }">
+                    <svg width="80" height="80" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg" style="filter: drop-shadow(0px 0px 10px rgba(0, 255, 255, 0.9));">
+                        <path d="M50 0L93.3013 75H6.69873L50 0Z" fill="#00FFFF"/>
+                    </svg>
+                </div>
+
                 <div class="absolute bottom-4 left-4 md:bottom-8 md:left-8 bg-black/60 backdrop-blur-sm p-4 rounded-lg text-white font-mono shadow-xl border border-white/20">
                     <h3 class="text-lg font-bold text-cyan-300 mb-2 border-b border-cyan-300/30 pb-1">GPS Data</h3>
                     <div class="grid grid-cols-2 gap-x-6 gap-y-1 text-base">
@@ -153,7 +161,7 @@
 
         createApp({
             setup() {
-                // ... (state variables remain the same)
+                // ... (most of the state variables are the same)
                 const loading = ref(true);
                 const appMode = ref('selection');
                 const statusMessage = ref('Initializing...');
@@ -181,6 +189,7 @@
                     if (remoteVideo.value && stream) {
                         console.log('[RECEIVER] Watcher triggered. Attaching stream to remote video element.');
                         remoteVideo.value.srcObject = stream;
+                        // ADDED: Attempt to play the video programmatically, and catch potential errors
                         remoteVideo.value.play().catch(error => {
                             console.error('[RECEIVER] Video play failed:', error);
                             statusMessage.value = "Video stream received, but autoplay was blocked. Click the screen to start video.";
@@ -271,6 +280,7 @@
                         } catch (err) {
                             console.warn('[CALLER] Environment-facing camera failed, falling back to default camera.', err);
                             statusMessage.value = "Rear camera not found, using front camera.";
+                            // Fallback to any camera if the environment one fails
                             mobileStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
                         }
                         
@@ -372,5 +382,4 @@
     </script>
 </body>
 </html>
-
 
